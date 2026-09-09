@@ -1,0 +1,24 @@
+INSTALLATION
+
+1. Keep your existing Laravel Boost AGENTS.md unchanged.
+2. Copy the .ai folder from this package into the root of your Laravel project.
+3. Final structure should look like:
+
+project-root/
+├── AGENTS.md
+├── artisan
+├── composer.json
+└── .ai/
+    └── rules/
+        ├── index.md
+        ├── project-context.md
+        ├── learning-guidelines.md
+        ├── architecture.md
+        ├── database.md
+        ├── financial-integrity.md
+        ├── inventory.md
+        ├── filament-ui.md
+        ├── attachments.md
+        └── testing-production.md
+
+Do not replace the Laravel Boost AGENTS.md with these files.
