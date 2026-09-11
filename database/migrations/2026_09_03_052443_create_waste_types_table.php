@@ -11,12 +11,19 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('waste_types', function (Blueprint $table) {
+        Schema::create('waste_types', function (Blueprint $table) {
+            $table->id();
+
             $table->foreignId('waste_category_id')
                 ->nullable()
-                ->after('id')
                 ->constrained('waste_categories')
                 ->nullOnDelete();
+
+            $table->string('code')->unique();
+            $table->string('name');
+            $table->string('unit')->default('kg');
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
         });
     }
 
@@ -25,9 +32,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('waste_types', function (Blueprint $table) {
-            $table->dropForeign(['waste_category_id']);
-            $table->dropColumn('waste_category_id');
-        });
+        Schema::dropIfExists('waste_types');
     }
 };

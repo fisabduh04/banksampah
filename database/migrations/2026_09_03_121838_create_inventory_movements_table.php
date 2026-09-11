@@ -18,6 +18,8 @@ return new class extends Migration
             $table->string('movement_type');
 
             $table->decimal('quantity', 12, 3);
+            $table->decimal('unit_cost', 15, 2)->default(0);
+            $table->decimal('total_cost', 15, 2)->default(0);
 
             $table->string('reference_type')->nullable();
             $table->unsignedBigInteger('reference_id')->nullable();
