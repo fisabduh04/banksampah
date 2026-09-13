@@ -19,57 +19,88 @@ class WastePriceImporter extends Importer
     protected static ?string $model = WastePrice::class;
 
     /**
-     * Format file impor:
+     * Format CSV:
      *
-     * Kode Bahan | Harga | Berlaku Mulai | Berlaku Sampai | Aktif
+     * Kode Bahan | Nama Bahan | Harga |
+     * Berlaku Mulai | Berlaku Sampai | Aktif
      *
-     * File hasil ekspor dapat diedit di Excel,
-     * disimpan kembali sebagai CSV UTF-8,
-     * kemudian diimpor kembali.
+     * Kode Bahan digunakan untuk mencocokkan Jenis Bahan.
+     * Nama Bahan hanya informasi bagi pengguna.
      */
     public static function getColumns(): array
     {
         return [
             /**
-             * File CSV berisi Kode Bahan,
-             * tetapi database menyimpan waste_type_id.
+             * Kode Bahan langsung dipetakan ke relasi wasteType().
              *
-             * Karena itu Kode Bahan dikonversi
-             * menjadi ID Jenis Bahan di sini.
+             * Contoh:
+             * LGM-BSI -> BESI
+             *
+             * Sistem mencari berdasarkan kolom "code"
+             * pada tabel waste_types, bukan berdasarkan ID.
              */
-            ImportColumn::make('waste_type_id')
+            ImportColumn::make('wasteType')
                 ->label('Kode Bahan')
+                ->exampleHeader('Kode Bahan')
+                ->example('LGM-BSI')
                 ->requiredMapping()
                 ->guess([
                     'Kode Bahan',
-                    'kode_bahan',
+                    'kode bahan',
+                    'wasteType',
                 ])
-                ->castStateUsing(function ($state) {
-                    $kodeBahan = trim((string) $state);
-
-                    $jenisBahan = WasteType::query()
-                        ->where('code', $kodeBahan)
-                        ->first();
-
-                    if (! $jenisBahan) {
-                        throw new RowImportFailedException(
-                            "Kode Bahan [{$kodeBahan}] tidak ditemukan."
-                        );
+                ->relationship(
+                    resolveUsing: function (string $state): ?WasteType {
+                        return WasteType::query()
+                            ->where('code', trim($state))
+                            ->first();
                     }
-
-                    return $jenisBahan->id;
-                })
-                ->rules([
-                    'required',
-                    'integer',
-                ]),
+                ),
 
             /**
-             * Harga bahan.
+             * Nama Bahan hanya membantu pengguna mengetahui
+             * bahan yang dimaksud.
+             *
+             * Kolom ini tidak disimpan ke tabel waste_prices.
+             */
+            ImportColumn::make('waste_type_name')
+                ->label('Nama Bahan')
+                ->exampleHeader('Nama Bahan')
+                ->example('BESI')
+                ->guess([
+                    'Nama Bahan',
+                    'nama bahan',
+                    'waste_type_name',
+                ])
+                ->rules([
+                    'nullable',
+                    'max:255',
+                ])
+                ->fillRecordUsing(
+                    function (WastePrice $record, $state): void {
+                        /**
+                         * Sengaja dikosongkan.
+                         *
+                         * Nama Bahan hanya informasi pada CSV.
+                         * Sumber kebenaran nama tetap berasal
+                         * dari master Jenis Bahan.
+                         */
+                    }
+                ),
+
+            /**
+             * Harga beli bahan.
              */
             ImportColumn::make('price')
                 ->label('Harga')
+                ->exampleHeader('Harga')
+                ->example('3000')
                 ->requiredMapping()
+                ->guess([
+                    'Harga',
+                    'harga',
+                    'price',
+                ])
                 ->numeric(decimalPlaces: 2)
                 ->rules([
                     'required',
@@ -80,17 +111,30 @@ class WastePriceImporter extends Importer
             /**
              * Tanggal mulai berlakunya harga.
              *
-             * Contoh dari Excel:
-             * 9/3/2026 0:00
+             * Format:
+             * YYYY-MM-DD
              *
-             * Dinormalisasi menjadi:
-             * 2026-09-03
+             * Contoh:
+             * 2026-09-11
              */
             ImportColumn::make('effective_from')
                 ->label('Berlaku Mulai')
+                ->exampleHeader('Berlaku Mulai')
+                ->example('2026-09-11')
                 ->requiredMapping()
+                ->guess([
+                    'Berlaku Mulai',
+                    'berlaku mulai',
+                    'effective_from',
+                ])
                 ->castStateUsing(
-                    fn ($state) => Carbon::parse($state)->toDateString()
+                    function ($state): ?string {
+                        if (blank($state)) {
+                            return null;
+                        }
+
+                        return Carbon::parse($state)->toDateString();
+                    }
                 )
                 ->rules([
                     'required',
@@ -98,15 +142,27 @@ class WastePriceImporter extends Importer
                 ]),
 
             /**
-             * Tanggal akhir berlaku.
-             * Boleh kosong.
+             * Tanggal akhir berlakunya harga.
+             *
+             * Boleh kosong apabila harga masih berlaku.
              */
             ImportColumn::make('effective_until')
                 ->label('Berlaku Sampai')
+                ->exampleHeader('Berlaku Sampai')
+                ->example('2026-12-31')
+                ->guess([
+                    'Berlaku Sampai',
+                    'berlaku sampai',
+                    'effective_until',
+                ])
                 ->castStateUsing(
-                    fn ($state) => blank($state)
-                            ? null
-                            : Carbon::parse($state)->toDateString()
+                    function ($state): ?string {
+                        if (blank($state)) {
+                            return null;
+                        }
+
+                        return Carbon::parse($state)->toDateString();
+                    }
                 )
                 ->rules([
                     'nullable',
@@ -114,13 +170,21 @@ class WastePriceImporter extends Importer
                 ]),
 
             /**
-             * Status aktif:
-             * 1 = aktif
-             * 0 = tidak aktif
+             * Status aktif.
+             *
+             * 1 = Aktif
+             * 0 = Tidak Aktif
              */
             ImportColumn::make('is_active')
                 ->label('Aktif')
+                ->exampleHeader('Aktif')
+                ->example('1')
                 ->requiredMapping()
+                ->guess([
+                    'Aktif',
+                    'aktif',
+                    'is_active',
+                ])
                 ->boolean()
                 ->rules([
                     'required',
@@ -130,46 +194,73 @@ class WastePriceImporter extends Importer
     }
 
     /**
-     * Menentukan apakah data:
-     * - memperbarui Harga Bahan lama; atau
-     * - membuat histori Harga Bahan baru.
+     * Menentukan apakah Harga Bahan dibuat baru
+     * atau memperbarui data yang sudah ada.
      *
-     * Kunci pencocokan:
-     * Jenis Bahan + Tanggal Berlaku Mulai.
+     * Identitas Harga Bahan:
+     * - Kode Bahan
+     * - Tanggal Berlaku Mulai
      */
     public function resolveRecord(): WastePrice
     {
-        $jenisBahanId = $this->data['waste_type_id'];
+        /**
+         * Nilai wasteType pada tahap ini masih berupa
+         * Kode Bahan dari CSV.
+         */
+        $kodeBahan = trim(
+            (string) $this->data['wasteType']
+        );
 
+        /**
+         * Cari Jenis Bahan berdasarkan Kode Bahan.
+         */
+        $jenisBahan = WasteType::query()
+            ->where('code', $kodeBahan)
+            ->first();
+
+        /**
+         * Jangan pernah membuat harga untuk
+         * Kode Bahan yang tidak ada pada master.
+         */
+        if (! $jenisBahan) {
+            throw new RowImportFailedException(
+                "Kode Bahan [{$kodeBahan}] tidak ditemukan pada master Jenis Bahan."
+            );
+        }
+
+        /**
+         * Normalisasi tanggal mulai berlaku.
+         */
         $tanggalMulai = Carbon::parse(
             $this->data['effective_from']
         )->toDateString();
 
         /**
          * Jika kombinasi bahan + tanggal sudah ada,
-         * Filament akan memperbarui record tersebut.
+         * record lama diperbarui.
          *
-         * Jika belum ada, dibuat record baru.
+         * Jika belum ada, record baru dibuat.
          */
         return WastePrice::firstOrNew([
-            'waste_type_id' => $jenisBahanId,
+            'waste_type_id' => $jenisBahan->id,
             'effective_from' => $tanggalMulai,
         ]);
     }
 
     /**
-     * Notifikasi setelah proses impor selesai.
+     * Pesan notifikasi setelah impor selesai.
      */
-    public static function getCompletedNotificationBody(Import $import): string
-    {
+    public static function getCompletedNotificationBody(
+        Import $import
+    ): string {
         $body = 'Impor data Harga Bahan selesai. '
             .Number::format($import->successful_rows)
-            .' baris berhasil diproses.';
+            .' baris berhasil diimpor.';
 
         if ($failedRowsCount = $import->getFailedRowsCount()) {
             $body .= ' '
                 .Number::format($failedRowsCount)
-                .' baris gagal diproses.';
+                .' baris gagal diimpor.';
         }
 
         return $body;

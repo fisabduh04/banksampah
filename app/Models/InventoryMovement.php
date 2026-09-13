@@ -11,6 +11,11 @@ class InventoryMovement extends Model
         'waste_type_id',
         'movement_type',
         'quantity',
+
+        // Nilai biaya persediaan.
+        'unit_cost',
+        'total_cost',
+
         'reference_type',
         'reference_id',
         'transaction_date',
@@ -21,6 +26,12 @@ class InventoryMovement extends Model
     {
         return [
             'quantity' => 'decimal:3',
+
+            // Jangan gunakan float sebagai cast permanen
+            // untuk angka keuangan.
+            'unit_cost' => 'decimal:2',
+            'total_cost' => 'decimal:2',
+
             'transaction_date' => 'date',
         ];
     }

@@ -16,4 +16,13 @@ class EditWasteType extends EditRecord
             DeleteAction::make(),
         ];
     }
+
+    /**
+     * Setelah perubahan data berhasil disimpan,
+     * kembali ke halaman daftar Jenis Bahan.
+     */
+    protected function getRedirectUrl(): string
+    {
+        return $this->getResource()::getUrl('index');
+    }
 }

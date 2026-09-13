@@ -11,43 +11,33 @@ use Illuminate\Support\Number;
 class WastePriceExporter extends Exporter
 {
     /**
-     * Model teknis yang diekspor.
-     *
-     * Dalam aplikasi, WastePrice ditampilkan
-     * kepada pengguna sebagai "Harga Bahan".
+     * Model teknis untuk fitur Harga Bahan.
      */
     protected static ?string $model = WastePrice::class;
 
     /**
-     * Menentukan kolom yang masuk ke file hasil ekspor.
-     *
-     * Catatan:
-     * - ID database tidak diekspor.
-     * - Kode Bahan digunakan sebagai identitas bisnis.
-     * - Kode Bahan juga digunakan kembali pada proses impor.
-     */
-    /**
-     * Kolom ekspor sengaja dibuat sama dengan format impor.
+     * Format ekspor dibuat sama dengan format impor.
      *
      * Tujuannya:
-     * file hasil ekspor dapat diedit di Excel,
-     * disimpan kembali sebagai CSV UTF-8,
-     * kemudian langsung digunakan untuk Impor Data.
+     * Ekspor -> Edit di Excel -> Save As CSV UTF-8 -> Impor kembali.
      */
     public static function getColumns(): array
     {
         return [
             /**
-             * Kode Bahan digunakan untuk mencari Jenis Bahan.
+             * Kode Bahan menjadi kunci utama pencocokan.
              */
             ExportColumn::make('wasteType.code')
                 ->label('Kode Bahan'),
 
             /**
-             * Nama Bahan.
+             * Nama Bahan ditampilkan agar user mengetahui
+             * bahan yang sedang dilihat.
+             *
+             * Nama tidak digunakan sebagai kunci update.
              */
             ExportColumn::make('wasteType.name')
-                ->label('Jenis Bahan'),
+                ->label('Nama Bahan'),
 
             /**
              * Harga bahan.
@@ -56,14 +46,13 @@ class WastePriceExporter extends Exporter
                 ->label('Harga'),
 
             /**
-             * Tanggal mulai berlakunya harga.
+             * Tanggal mulai berlaku.
              */
             ExportColumn::make('effective_from')
                 ->label('Berlaku Mulai'),
 
             /**
-             * Tanggal akhir berlakunya harga.
-             * Boleh kosong jika harga masih berlaku.
+             * Tanggal akhir berlaku.
              */
             ExportColumn::make('effective_until')
                 ->label('Berlaku Sampai'),
@@ -80,7 +69,7 @@ class WastePriceExporter extends Exporter
     }
 
     /**
-     * Menampilkan notifikasi setelah proses ekspor selesai.
+     * Notifikasi setelah proses ekspor selesai.
      */
     public static function getCompletedNotificationBody(Export $export): string
     {
@@ -88,10 +77,6 @@ class WastePriceExporter extends Exporter
             .Number::format($export->successful_rows)
             .' baris berhasil diekspor.';
 
-        /**
-         * Jika ada baris gagal diekspor,
-         * tampilkan jumlah kegagalannya.
-         */
         if ($failedRowsCount = $export->getFailedRowsCount()) {
             $body .= ' '
                 .Number::format($failedRowsCount)

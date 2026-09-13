@@ -140,12 +140,27 @@ class DepositService
             foreach ($deposit->items as $item) {
                 InventoryMovement::create([
                     'waste_type_id' => $item->waste_type_id,
-                    'movement_type' => 'out',
+                    'movement_type' => 'in',
+
+                    // Kuantitas persediaan masuk.
                     'quantity' => $item->weight,
-                    'reference_type' => 'deposit_cancellation',
+
+                    /*
+     * Harga setoran menjadi biaya perolehan
+     * persediaan Bank Sampah.
+     */
+                    'unit_cost' => $item->price,
+
+                    /*
+     * Gunakan subtotal transaksi yang sudah
+     * divalidasi sebelumnya.
+     */
+                    'total_cost' => $item->subtotal,
+
+                    'reference_type' => 'deposit',
                     'reference_id' => $deposit->id,
-                    'transaction_date' => now()->toDateString(),
-                    'description' => 'Pembatalan setoran nasabah '.$deposit->deposit_number,
+                    'transaction_date' => $deposit->transaction_date,
+                    'description' => 'Setoran nasabah '.$deposit->deposit_number,
                 ]);
             }
 

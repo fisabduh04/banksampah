@@ -11,33 +11,26 @@ use Illuminate\Support\Number;
 class WasteTypeExporter extends Exporter
 {
     /**
-     * Model teknis yang diekspor.
-     *
-     * Dalam aplikasi, WasteType ditampilkan sebagai "Jenis Bahan".
+     * Model teknis untuk fitur Jenis Bahan.
      */
     protected static ?string $model = WasteType::class;
 
     /**
-     * Menentukan kolom yang masuk ke file hasil ekspor.
+     * Kolom ekspor sengaja dibuat sama dengan format impor.
      *
-     * Catatan:
-     * - ID database tidak diekspor.
-     * - waste_category_id juga tidak diekspor karena terlalu teknis.
-     * - Sebagai gantinya, kita tampilkan Kode Kategori dari relasi category.
+     * Tujuannya:
+     * Ekspor -> Edit di Excel -> Save As CSV UTF-8 -> Impor kembali.
      */
     public static function getColumns(): array
     {
         return [
             /**
-             * Kode Kategori Bahan.
+             * Nama Kategori Bahan.
              *
-             * Contoh:
-             * LOG = Logam
-             * KRT = Kertas
-             * PLS = Plastik
+             * User tidak perlu mengetahui ID ataupun kode internal kategori.
              */
-            ExportColumn::make('category.code')
-                ->label('Kode Kategori'),
+            ExportColumn::make('category.name')
+                ->label('Kategori'),
 
             /**
              * Kode unik Jenis Bahan.
@@ -53,39 +46,23 @@ class WasteTypeExporter extends Exporter
 
             /**
              * Satuan bahan.
-             *
-             * Contoh:
-             * kg
              */
             ExportColumn::make('unit')
                 ->label('Satuan'),
 
             /**
-             * Status aktif Jenis Bahan.
+             * Status aktif.
              *
-             * Nilai:
              * 1 = aktif
              * 0 = tidak aktif
              */
             ExportColumn::make('is_active')
                 ->label('Aktif'),
-
-            /**
-             * Tanggal data dibuat.
-             */
-            ExportColumn::make('created_at')
-                ->label('Tanggal Dibuat'),
-
-            /**
-             * Waktu terakhir data diperbarui.
-             */
-            ExportColumn::make('updated_at')
-                ->label('Terakhir Diperbarui'),
         ];
     }
 
     /**
-     * Pesan notifikasi setelah proses ekspor selesai.
+     * Notifikasi setelah proses ekspor selesai.
      */
     public static function getCompletedNotificationBody(Export $export): string
     {
@@ -93,10 +70,6 @@ class WasteTypeExporter extends Exporter
             .Number::format($export->successful_rows)
             .' baris berhasil diekspor.';
 
-        /**
-         * Jika ada data gagal diekspor,
-         * tampilkan jumlah kegagalannya.
-         */
         if ($failedRowsCount = $export->getFailedRowsCount()) {
             $body .= ' '
                 .Number::format($failedRowsCount)
