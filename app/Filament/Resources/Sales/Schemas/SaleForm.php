@@ -12,6 +12,7 @@ use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Validation\Rule;
 
 class SaleForm
 {
@@ -45,6 +46,8 @@ class SaleForm
 
                         Select::make('collector_id')
                             ->label('Pengepul')
+                            ->rules([Rule::exists('collectors', 'id')->where('is_active', true)])
+                            ->validationMessages(['exists' => 'Pilih pengepul yang masih aktif.', 'required' => 'Pengepul wajib dipilih.'])
                             ->relationship(
                                 name: 'collector',
                                 titleAttribute: 'name',
@@ -60,6 +63,11 @@ class SaleForm
                             ->searchable()
                             ->preload()
                             ->required(),
+
+                        DatePicker::make('due_date')
+                            ->label('Jatuh Tempo Pembayaran')
+                            ->nullable()
+                            ->helperText('Opsional untuk penjualan dengan piutang.'),
 
                         DatePicker::make('transaction_date')
                             ->label('Tanggal Penjualan')
@@ -94,6 +102,8 @@ class SaleForm
 
                                 Select::make('waste_type_id')
                                     ->label('Jenis Sampah')
+                                    ->rules([Rule::exists('waste_types', 'id')->where('is_active', true)])
+                                    ->validationMessages(['exists' => 'Pilih jenis sampah yang masih aktif.', 'required' => 'Jenis sampah wajib dipilih.', 'distinct' => 'Jenis sampah tidak boleh berulang.'])
                                     ->relationship(
                                         name: 'wasteType',
                                         titleAttribute: 'name',
@@ -122,6 +132,9 @@ class SaleForm
                                     ->suffix('kg')
                                     ->required()
                                     ->minValue(0.001)
+                                    ->step(0.001)
+                                    ->rules(['decimal:0,3'])
+                                    ->validationMessages(['min' => 'Berat harus lebih dari nol.', 'decimal' => 'Berat maksimal tiga angka desimal.'])
                                     ->default(0)
                                     ->live(onBlur: true)
 
@@ -140,7 +153,10 @@ class SaleForm
                                     ->numeric()
                                     ->prefix('Rp')
                                     ->required()
-                                    ->minValue(0)
+                                    ->minValue(0.01)
+                                    ->step(0.01)
+                                    ->rules(['decimal:0,2'])
+                                    ->validationMessages(['min' => 'Harga jual harus lebih dari nol.', 'decimal' => 'Harga maksimal dua angka desimal.'])
                                     ->default(0)
                                     ->live(onBlur: true)
 
@@ -283,7 +299,7 @@ class SaleForm
          * Karena callback berada di dalam item Repeater,
          * ../ berarti naik satu tingkat ke seluruh daftar item.
          */
-        $items = $get('../') ?? [];
+        $items = $get('../../items') ?? [];
 
         $totalBerat = 0;
         $totalPenjualan = 0;

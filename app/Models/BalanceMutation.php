@@ -17,6 +17,16 @@ class BalanceMutation extends Model
         'description',
     ];
 
+    protected static function booted(): void
+    {
+        static::updating(function (self $record): void {
+            throw new \UnexpectedValueException('Riwayat ledger tidak dapat diubah. Gunakan mutasi koreksi.');
+        });
+        static::deleting(function (self $record): void {
+            throw new \UnexpectedValueException('Riwayat ledger tidak dapat dihapus. Gunakan mutasi pembalik.');
+        });
+    }
+
     protected function casts(): array
     {
         return [

@@ -11,6 +11,8 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Auth\Access\Response;
+use Illuminate\Database\Eloquent\Model;
 
 class InventoryMovementResource extends Resource
 {
@@ -43,6 +45,26 @@ class InventoryMovementResource extends Resource
     public static function table(Table $table): Table
     {
         return InventoryMovementsTable::configure($table);
+    }
+
+    public static function getCreateAuthorizationResponse(): Response
+    {
+        return Response::deny('Mutasi persediaan hanya dibuat melalui transaksi.');
+    }
+
+    public static function getEditAuthorizationResponse(Model $record): Response
+    {
+        return Response::deny('Riwayat persediaan tidak boleh diubah.');
+    }
+
+    public static function getDeleteAuthorizationResponse(Model $record): Response
+    {
+        return Response::deny('Riwayat persediaan tidak boleh dihapus.');
+    }
+
+    public static function getDeleteAnyAuthorizationResponse(): Response
+    {
+        return Response::deny('Riwayat persediaan tidak boleh dihapus.');
     }
 
     public static function getRelations(): array

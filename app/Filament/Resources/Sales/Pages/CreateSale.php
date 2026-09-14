@@ -2,16 +2,20 @@
 
 namespace App\Filament\Resources\Sales\Pages;
 
+use App\Filament\Concerns\UsesIndonesianLocale;
 use App\Filament\Resources\Sales\SaleResource;
 use App\Models\Sale;
+use App\Services\SaleDraftService;
 use Filament\Resources\Pages\CreateRecord;
-use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class CreateSale extends CreateRecord
 {
+    use UsesIndonesianLocale;
+
     protected static string $resource = SaleResource::class;
+
+    protected ?bool $hasDatabaseTransactions = true;
 
     /**
      * Judul halaman dalam Bahasa Indonesia.
@@ -42,6 +46,7 @@ class CreateSale extends CreateRecord
          * Setiap transaksi baru selalu dimulai sebagai Draft.
          */
         $data['status'] = Sale::STATUS_DRAFT;
+        $data['payment_status'] = 'unpaid';
 
         /*
          * Total dari browser tidak dijadikan nilai final.
@@ -83,97 +88,9 @@ class CreateSale extends CreateRecord
      */
     protected function afterCreate(): void
     {
-        /*
-         * ============================================================
-         * 1. BUAT NOMOR PENJUALAN FINAL
-         * ============================================================
-         */
-
-        $tanggal = Carbon::parse(
-            $this->record->transaction_date
-        )->format('Ymd');
-
-        /*
-         * Contoh:
-         *
-         * ID database = 12
-         * tanggal     = 10 September 2026
-         *
-         * hasil:
-         * PJ-20260910-000012
-         */
-        $nomorPenjualan =
-            'PJ-'
-            .$tanggal
-            .'-'
-            .str_pad(
-                (string) $this->record->getKey(),
-                6,
-                '0',
-                STR_PAD_LEFT
-            );
-
-        /*
-         * ============================================================
-         * 2. HITUNG ULANG SUBTOTAL DI DATABASE
-         * ============================================================
-         *
-         * Jangan hanya mempercayai subtotal dari Livewire/browser.
-         *
-         * MySQL melakukan perkalian terhadap kolom DECIMAL
-         * langsung di database.
-         */
-        $this->record
-            ->items()
-            ->update([
-                'subtotal' => DB::raw(
-                    'ROUND(weight * price, 2)'
-                ),
-            ]);
-
-        /*
-         * ============================================================
-         * 3. HITUNG TOTAL BERAT DAN TOTAL PENJUALAN
-         * ============================================================
-         */
-
-        $ringkasan = $this->record
-            ->items()
-            ->selectRaw(
-                '
-                    COALESCE(SUM(weight), 0) AS total_weight,
-                    COALESCE(SUM(subtotal), 0) AS total_amount
-                '
-            )
-            ->first();
-
-        /*
-         * ============================================================
-         * 4. SIMPAN NILAI FINAL HEADER TRANSAKSI
-         * ============================================================
-         */
-        $this->record->update([
-            'sale_number' => $nomorPenjualan,
-
-            'total_weight' => $ringkasan?->total_weight ?? 0,
-
-            'total_amount' => $ringkasan?->total_amount ?? 0,
-
-            /*
-             * Tetap nol karena transaksi masih Draft.
-             *
-             * HPP dan laba dihitung ketika Posting.
-             */
-            'total_cost' => 0,
-            'gross_profit' => 0,
-
-            'status' => Sale::STATUS_DRAFT,
-        ]);
+        app(SaleDraftService::class)->recalculate($this->record);
     }
 
-    /**
-     * Tombol pada bagian bawah formulir.
-     */
     protected function getFormActions(): array
     {
         return [

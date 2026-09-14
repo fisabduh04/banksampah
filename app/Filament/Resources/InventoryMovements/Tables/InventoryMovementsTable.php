@@ -20,12 +20,13 @@ class InventoryMovementsTable
      * tetapi dihasilkan otomatis dari transaksi seperti:
      * - Setoran Nasabah
      * - Pembatalan Setoran
-     * - Penjualan ke Pengepul (nanti)
-     * - Pembatalan Penjualan (nanti)
+     * - Penjualan ke Pengepul
+     * - Pembatalan Penjualan
      */
     public static function configure(Table $table): Table
     {
         return $table
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with('wasteType')->withStockReport())
             ->columns([
 
                 /**
@@ -33,7 +34,7 @@ class InventoryMovementsTable
                  * perubahan persediaan.
                  */
                 TextColumn::make('transaction_date')
-                    ->label('Tanggal')
+                    ->label('Tanggal Pembukuan')
                     ->date('d M Y')
                     ->sortable(),
 
@@ -57,7 +58,7 @@ class InventoryMovementsTable
                 TextColumn::make('barang_masuk')
                     ->label('Masuk')
                     ->state(
-                        fn (InventoryMovement $record) => $record->movement_type === 'in'
+                        fn (InventoryMovement $record) => ! $record->isCostCorrection() && $record->movement_type === 'in'
                                 ? $record->quantity
                                 : null
                     )
@@ -74,7 +75,7 @@ class InventoryMovementsTable
                 TextColumn::make('barang_keluar')
                     ->label('Keluar')
                     ->state(
-                        fn (InventoryMovement $record) => $record->movement_type === 'out'
+                        fn (InventoryMovement $record) => ! $record->isCostCorrection() && $record->movement_type === 'out'
                                 ? $record->quantity
                                 : null
                     )
@@ -93,54 +94,7 @@ class InventoryMovementsTable
                  */
                 TextColumn::make('stok_berjalan')
                     ->label('Stok')
-                    ->state(function (InventoryMovement $record): float {
-
-                        // Hitung seluruh barang masuk sampai record ini.
-                        $totalMasuk = InventoryMovement::query()
-                            ->where('waste_type_id', $record->waste_type_id)
-                            ->where(function (Builder $query) use ($record) {
-                                $query
-                                    ->whereDate(
-                                        'transaction_date',
-                                        '<',
-                                        $record->transaction_date
-                                    )
-                                    ->orWhere(function (Builder $query) use ($record) {
-                                        $query
-                                            ->whereDate(
-                                                'transaction_date',
-                                                $record->transaction_date
-                                            )
-                                            ->where('id', '<=', $record->id);
-                                    });
-                            })
-                            ->where('movement_type', 'in')
-                            ->sum('quantity');
-
-                        // Hitung seluruh barang keluar sampai record ini.
-                        $totalKeluar = InventoryMovement::query()
-                            ->where('waste_type_id', $record->waste_type_id)
-                            ->where(function (Builder $query) use ($record) {
-                                $query
-                                    ->whereDate(
-                                        'transaction_date',
-                                        '<',
-                                        $record->transaction_date
-                                    )
-                                    ->orWhere(function (Builder $query) use ($record) {
-                                        $query
-                                            ->whereDate(
-                                                'transaction_date',
-                                                $record->transaction_date
-                                            )
-                                            ->where('id', '<=', $record->id);
-                                    });
-                            })
-                            ->where('movement_type', 'out')
-                            ->sum('quantity');
-
-                        return (float) $totalMasuk - (float) $totalKeluar;
-                    })
+                    ->state(fn (InventoryMovement $record): float => (float) $record->running_quantity)
                     ->numeric(decimalPlaces: 3)
                     ->suffix(' kg'),
 
@@ -150,6 +104,11 @@ class InventoryMovementsTable
                  * Contoh:
                  * "Setoran nasabah ST-2026-000006"
                  */
+                TextColumn::make('effective_date')->label('Tanggal Sumber Biaya')->date('d M Y'),
+                TextColumn::make('jenis_mutasi')->label('Jenis Mutasi')->state(fn (InventoryMovement $record): string => $record->isCostCorrection() ? 'Koreksi nilai, tanpa perpindahan barang' : 'Perpindahan barang'),
+                TextColumn::make('unit_cost')->label('Biaya per kg')->money('IDR')->toggleable(),
+                TextColumn::make('total_cost')->label('Nilai Persediaan')->money('IDR')->toggleable(),
+
                 TextColumn::make('description')
                     ->label('Keterangan')
                     ->searchable()
@@ -190,7 +149,7 @@ class InventoryMovementsTable
                  * dalam rentang tanggal tertentu.
                  */
                 Filter::make('transaction_date')
-                    ->label('Periode')
+                    ->label('Periode Sumber Transaksi')
                     ->schema([
                         DatePicker::make('from')
                             ->label('Dari Tanggal'),
@@ -202,19 +161,11 @@ class InventoryMovementsTable
                         return $query
                             ->when(
                                 $data['from'] ?? null,
-                                fn (Builder $query, $date): Builder => $query->whereDate(
-                                    'transaction_date',
-                                    '>=',
-                                    $date
-                                )
+                                fn (Builder $query, $date): Builder => $query->whereRaw('('.InventoryMovement::EFFECTIVE_DATE_SQL.') >= ?', [$date])
                             )
                             ->when(
                                 $data['until'] ?? null,
-                                fn (Builder $query, $date): Builder => $query->whereDate(
-                                    'transaction_date',
-                                    '<=',
-                                    $date
-                                )
+                                fn (Builder $query, $date): Builder => $query->effectiveThrough($date)
                             );
                     }),
             ])
@@ -243,6 +194,6 @@ class InventoryMovementsTable
              * Urutkan dari transaksi paling lama ke terbaru
              * agar stok berjalan mudah dibaca seperti buku stok.
              */
-            ->defaultSort('transaction_date', 'desc');
+            ->defaultSort('effective_date', 'desc');
     }
 }

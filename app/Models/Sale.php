@@ -118,6 +118,10 @@ class Sale extends Model
      */
     public function getPaidAmountAttribute(): float
     {
+        if (array_key_exists('active_paid_amount', $this->attributes)) {
+            return (float) $this->attributes['active_paid_amount'];
+        }
+
         return (float) $this->payments()
             ->where('status', SalePayment::STATUS_POSTED)
             ->sum('amount');
@@ -130,8 +134,7 @@ class Sale extends Model
     {
         return max(
             0,
-            (float) $this->total_amount
-            - $this->paid_amount
+            round((float) $this->total_amount - $this->paid_amount, 2)
         );
     }
 }

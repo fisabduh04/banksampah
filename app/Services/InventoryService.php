@@ -4,222 +4,124 @@ namespace App\Services;
 
 use App\Models\InventoryMovement;
 use App\Models\WasteType;
-use RuntimeException;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
+use UnexpectedValueException;
 
 class InventoryService
 {
-    /**
-     * Mengambil saldo persediaan satu jenis sampah.
-     *
-     * Hasil:
-     * quantity     = stok tersedia
-     * value        = nilai persediaan
-     * average_cost = biaya rata-rata per kg
-     */
-    public function getBalance(int $wasteTypeId): array
+    /** @return array{quantity: float, value: float, average_cost: float} Angka tampilan, bukan dasar pembukuan. */
+    public function getBalance(int $wasteTypeId, ?string $through = null): array
     {
-        $summary = InventoryMovement::query()
-            ->where('waste_type_id', $wasteTypeId)
-            ->selectRaw("
-                COALESCE(
-                    SUM(
-                        CASE
-                            WHEN movement_type = 'in'
-                                THEN quantity
-                            WHEN movement_type = 'out'
-                                THEN -quantity
-                            ELSE 0
-                        END
-                    ),
-                    0
-                ) AS quantity
-            ")
-            ->selectRaw("
-                COALESCE(
-                    SUM(
-                        CASE
-                            WHEN movement_type = 'in'
-                                THEN total_cost
-                            WHEN movement_type = 'out'
-                                THEN -total_cost
-                            ELSE 0
-                        END
-                    ),
-                    0
-                ) AS value
-            ")
-            ->first();
+        return array_map(fn (string $value): float => (float) $value, $this->getExactBalance($wasteTypeId, $through));
+    }
 
-        $quantity = round(
-            (float) ($summary?->quantity ?? 0),
-            3
-        );
+    /** @return array{quantity: string, value: string, average_cost: string} */
+    public function getExactBalance(int $wasteTypeId, ?string $through = null): array
+    {
+        return $this->summarize(InventoryMovement::query()->where('waste_type_id', $wasteTypeId)
+            ->when($through !== null, fn ($query) => $query->effectiveThrough($through))->get());
+    }
 
-        $value = round(
-            (float) ($summary?->value ?? 0),
-            2
-        );
+    /** @return array{quantity: float, value: float, average_cost: float} Untuk kompatibilitas tampilan. */
+    public function getLockedBalance(int $wasteTypeId): array
+    {
+        return array_map(fn (string $value): float => (float) $value, $this->getExactLockedBalance($wasteTypeId));
+    }
 
-        /*
-         * Jika stok sangat dekat dengan nol,
-         * perlakukan sebagai nol.
-         */
-        if (abs($quantity) < 0.0005) {
-            $quantity = 0.000;
-
-            if (abs($value) < 0.01) {
-                $value = 0.00;
+    /** @return array{quantity: string, value: string, average_cost: string} */
+    public function getExactLockedBalance(int $wasteTypeId): array
+    {
+        if (DB::transactionLevel() === 0) {
+            throw new UnexpectedValueException('Penguncian persediaan harus berada dalam transaksi database.');
+        }
+        WasteType::query()->whereKey($wasteTypeId)->lockForUpdate()->firstOrFail();
+        $movements = InventoryMovement::query()->where('waste_type_id', $wasteTypeId)->lockForUpdate()->get();
+        $missingCosts = $movements->filter(fn (InventoryMovement $movement): bool => $movement->reference_type === 'deposit'
+            && $movement->movement_type === 'in' && BigDecimal::of($movement->quantity)->isGreaterThan(0)
+            && BigDecimal::of($movement->total_cost)->isLessThanOrEqualTo(0));
+        if ($missingCosts->isNotEmpty()) {
+            $reconciledIds = DB::table('inventory_cost_reconciliations')
+                ->whereIn('inventory_movement_id', $missingCosts->modelKeys())
+                ->whereNotNull('reversal_movement_id')->whereNotNull('replacement_movement_id')
+                ->lockForUpdate()->pluck('inventory_movement_id')->all();
+            if ($missingCosts->except($reconciledIds)->isNotEmpty()) {
+                throw new UnexpectedValueException('Biaya perolehan setoran lama belum lengkap. Rekonsiliasi persediaan terlebih dahulu sebelum memproses transaksi stok.');
             }
         }
 
-        /*
-         * Hitung biaya rata-rata persediaan.
-         */
-        $averageCost = $quantity > 0
-            ? round($value / $quantity, 2)
-            : 0.00;
-
-        return [
-            'quantity' => $quantity,
-            'value' => $value,
-            'average_cost' => $averageCost,
-        ];
+        return $this->summarize($movements);
     }
 
-    /**
-     * Mengunci jenis sampah sebelum membaca stok.
-     *
-     * Method ini digunakan di dalam DB::transaction().
+    /** @param Collection<int, InventoryMovement> $movements
+     * @return array{quantity: string, value: string, average_cost: string}
      */
-    public function getLockedBalance(int $wasteTypeId): array
+    private function summarize(Collection $movements): array
     {
-        /*
-         * WasteType menjadi titik penguncian transaksi stok.
-         */
-        WasteType::query()
-            ->whereKey($wasteTypeId)
-            ->lockForUpdate()
-            ->firstOrFail();
-
-        return $this->getBalance($wasteTypeId);
-    }
-
-    /**
-     * Memastikan stok mencukupi sebelum dikeluarkan.
-     */
-    public function ensureAvailable(
-        int $wasteTypeId,
-        float $quantity
-    ): array {
-        if ($quantity <= 0) {
-            throw new RuntimeException(
-                'Jumlah persediaan yang akan dikeluarkan harus lebih dari nol.'
-            );
+        $quantity = BigDecimal::of(0);
+        $value = BigDecimal::of(0);
+        foreach ($movements as $movement) {
+            if (! in_array($movement->movement_type, ['in', 'out'], true)) {
+                throw new UnexpectedValueException('Arah mutasi persediaan tidak valid.');
+            }
+            $sign = $movement->movement_type === 'in' ? 1 : -1;
+            if (! $movement->isCostCorrection()) {
+                $quantity = $quantity->plus(BigDecimal::of($movement->quantity)->multipliedBy($sign));
+            }
+            $value = $value->plus(BigDecimal::of($movement->total_cost)->multipliedBy($sign));
         }
 
-        $balance = $this->getLockedBalance(
-            $wasteTypeId
-        );
+        return ['quantity' => (string) $quantity->toScale(3), 'value' => (string) $value->toScale(2),
+            'average_cost' => $quantity->isGreaterThan(0) ? (string) $value->dividedBy($quantity, 2, RoundingMode::HalfUp) : '0.00'];
+    }
 
-        /*
-         * Quantity disimpan dengan tiga angka desimal.
-         */
-        if (
-            ($balance['quantity'] + 0.0005)
-            < $quantity
-        ) {
-            throw new RuntimeException(
-                sprintf(
-                    'Stok tidak mencukupi. Stok tersedia %.3f kg, sedangkan kebutuhan %.3f kg.',
-                    $balance['quantity'],
-                    $quantity
-                )
-            );
+    /** @return array{quantity: string, value: string, average_cost: string} */
+    public function ensureAvailable(int $wasteTypeId, string|int|float $quantity): array
+    {
+        $quantity = BigDecimal::of((string) $quantity)->toScale(3, RoundingMode::HalfUp);
+        if ($quantity->isLessThanOrEqualTo(0)) {
+            throw new UnexpectedValueException('Jumlah persediaan yang akan dikeluarkan harus lebih dari nol.');
+        }
+        $balance = $this->getExactLockedBalance($wasteTypeId);
+        if ($quantity->isGreaterThan($balance['quantity'])) {
+            throw new UnexpectedValueException('Stok tidak mencukupi. Stok tersedia '.$balance['quantity'].' kg, sedangkan kebutuhan '.$quantity.' kg.');
         }
 
         return $balance;
     }
 
-    /**
-     * Mencatat mutasi persediaan keluar.
-     *
-     * Menggunakan metode biaya rata-rata bergerak.
-     */
-    public function issue(
-        int $wasteTypeId,
-        float $quantity,
-        string $referenceType,
-        int $referenceId,
-        string $transactionDate,
-        string $description
-    ): InventoryMovement {
-        $quantity = round(
-            $quantity,
-            3
-        );
-
-        /*
-         * Periksa sekaligus kunci stok.
-         */
-        $balance = $this->ensureAvailable(
-            $wasteTypeId,
-            $quantity
-        );
-
-        $stockQuantity = (float) $balance['quantity'];
-        $stockValue = (float) $balance['value'];
-        $averageCost = (float) $balance['average_cost'];
-
-        /*
-         * Jika seluruh stok dikeluarkan,
-         * keluarkan juga seluruh nilai persediaannya.
-         */
-        $isFullIssue =
-            abs($stockQuantity - $quantity) < 0.0005;
-
-        if ($isFullIssue) {
-            $totalCost = round(
-                $stockValue,
-                2
-            );
-        } else {
-            $totalCost = round(
-                $quantity * $averageCost,
-                2
-            );
-
-            /*
-             * Nilai keluar tidak boleh melebihi
-             * nilai persediaan yang tersedia.
-             */
-            $totalCost = min(
-                $totalCost,
-                $stockValue
-            );
+    /** Pemostingan mundur sesudah pergerakan fisik terakhir akan memakai rata-rata biaya yang salah. */
+    public function ensureChronological(int $wasteTypeId, string $date): void
+    {
+        if (DB::transactionLevel() === 0) {
+            throw new UnexpectedValueException('Pemeriksaan urutan stok wajib berada dalam transaksi database.');
         }
+        WasteType::query()->whereKey($wasteTypeId)->lockForUpdate()->firstOrFail();
+        $latest = InventoryMovement::query()->where('waste_type_id', $wasteTypeId)->physical()
+            ->orderByDesc('transaction_date')->lockForUpdate()->first();
+        if ($latest && $date < $latest->transaction_date->toDateString()) {
+            throw new UnexpectedValueException('Tanggal transaksi mendahului mutasi stok terakhir. Gunakan tanggal pembukuan yang berurutan agar HPP konsisten.');
+        }
+    }
 
-        /*
-         * Snapshot biaya per unit.
-         */
-        $unitCost = $quantity > 0
-            ? round($totalCost / $quantity, 2)
-            : 0.00;
+    public function issue(int $wasteTypeId, string|int|float $quantity, string $referenceType, int $referenceId, string $transactionDate, string $description): InventoryMovement
+    {
+        $balance = $this->ensureAvailable($wasteTypeId, $quantity);
+        $this->ensureChronological($wasteTypeId, $transactionDate);
+        $quantity = BigDecimal::of((string) $quantity)->toScale(3, RoundingMode::HalfUp);
+        $stockValue = BigDecimal::of($balance['value']);
+        if ($stockValue->isLessThan(0)) {
+            throw new UnexpectedValueException('Nilai persediaan negatif. Periksa riwayat persediaan sebelum posting.');
+        }
+        $totalCost = $stockValue->multipliedBy($quantity)->dividedBy($balance['quantity'], 2, RoundingMode::HalfUp);
 
         return InventoryMovement::create([
-            'waste_type_id' => $wasteTypeId,
-            'movement_type' => 'out',
-
-            'quantity' => $quantity,
-
-            'unit_cost' => $unitCost,
-            'total_cost' => $totalCost,
-
-            'reference_type' => $referenceType,
-            'reference_id' => $referenceId,
-
-            'transaction_date' => $transactionDate,
-
-            'description' => $description,
+            'waste_type_id' => $wasteTypeId, 'movement_type' => 'out', 'quantity' => (string) $quantity,
+            'unit_cost' => (string) $totalCost->dividedBy($quantity, 2, RoundingMode::HalfUp), 'total_cost' => (string) $totalCost,
+            'reference_type' => $referenceType, 'reference_id' => $referenceId,
+            'transaction_date' => $transactionDate, 'description' => $description,
         ]);
     }
 }

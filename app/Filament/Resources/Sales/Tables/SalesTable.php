@@ -10,6 +10,7 @@ use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -17,8 +18,9 @@ use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
-use RuntimeException;
+use Illuminate\Support\Str;
 use Throwable;
+use UnexpectedValueException;
 
 class SalesTable
 {
@@ -243,13 +245,14 @@ class SalesTable
                  * Transaksi Posted dapat dibatalkan.
                  */
                 Action::make('batalkanPenjualan')
+                    ->authorize(fn (Sale $record): bool => (auth()->user()?->canPerformFinancialOperation('approve') ?? false) && SaleResource::can('update', $record))
                     ->label('Batalkan Penjualan')
                     ->icon('heroicon-o-arrow-uturn-left')
                     ->color('danger')
                     ->visible(
                         fn (Sale $record): bool => $record->status === Sale::STATUS_POSTED
                     )
-                    ->form([
+                    ->schema([
                         Textarea::make('reason')
                             ->label('Alasan Pembatalan Penjualan')
                             ->placeholder(
@@ -275,7 +278,7 @@ class SalesTable
                                 $userId = auth()->id();
 
                                 if (! $userId) {
-                                    throw new RuntimeException(
+                                    throw new UnexpectedValueException(
                                         'Pengguna tidak terautentikasi.'
                                     );
                                 }
@@ -298,7 +301,7 @@ class SalesTable
                                     ->success()
                                     ->send();
 
-                            } catch (RuntimeException $exception) {
+                            } catch (UnexpectedValueException $exception) {
                                 Notification::make()
                                     ->title('Penjualan tidak dapat dibatalkan')
                                     ->body($exception->getMessage())
@@ -311,7 +314,7 @@ class SalesTable
 
                                 Notification::make()
                                     ->title('Terjadi kesalahan')
-                                    ->body($exception->getMessage())
+                                    ->body('Pembatalan gagal diproses. Hubungi administrator.')
                                     ->danger()
                                     ->persistent()
                                     ->send();
@@ -320,6 +323,7 @@ class SalesTable
                     ),
 
                 Action::make('catatPembayaran')
+                    ->authorize(fn (Sale $record): bool => (auth()->user()?->canPerformFinancialOperation('record') ?? false) && SaleResource::can('update', $record))
                     ->label('Catat Pembayaran')
                     ->icon('heroicon-o-banknotes')
                     ->color('primary')
@@ -332,7 +336,8 @@ class SalesTable
                         fn (Sale $record): bool => $record->status === Sale::STATUS_POSTED
                             && $record->payment_status !== 'paid'
                     )
-                    ->form([
+                    ->schema([
+                        Hidden::make('idempotency_key')->default(fn (): string => (string) Str::uuid())->required()->rule('uuid'),
                         DatePicker::make('payment_date')
                             ->label('Tanggal Pembayaran')
                             ->default(now())
@@ -343,7 +348,7 @@ class SalesTable
                             ->numeric()
                             ->prefix('Rp')
                             ->required()
-                            ->minValue(1),
+                            ->minValue(0.01)->rule('decimal:0,2'),
 
                         Select::make('payment_method')
                             ->label('Metode Pembayaran')
@@ -380,7 +385,7 @@ class SalesTable
                                 $userId = auth()->id();
 
                                 if (! $userId) {
-                                    throw new RuntimeException(
+                                    throw new UnexpectedValueException(
                                         'Pengguna tidak terautentikasi.'
                                     );
                                 }
@@ -388,12 +393,13 @@ class SalesTable
                                 app(SalePaymentService::class)
                                     ->recordPayment(
                                         sale: $record,
-                                        amount: (float) $data['amount'],
+                                        amount: (string) $data['amount'],
                                         paymentDate: $data['payment_date'],
                                         paymentMethod: $data['payment_method'],
                                         referenceNumber: $data['reference_number'] ?? null,
                                         notes: $data['notes'] ?? null,
-                                        userId: (int) $userId
+                                        userId: (int) $userId,
+                                        idempotencyKey: $data['idempotency_key'],
                                     );
 
                                 Notification::make()
@@ -406,7 +412,7 @@ class SalesTable
                                     ->success()
                                     ->send();
 
-                            } catch (RuntimeException $exception) {
+                            } catch (UnexpectedValueException $exception) {
                                 Notification::make()
                                     ->title(
                                         'Pembayaran tidak dapat dicatat'

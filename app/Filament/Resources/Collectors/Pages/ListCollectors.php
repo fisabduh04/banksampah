@@ -2,12 +2,15 @@
 
 namespace App\Filament\Resources\Collectors\Pages;
 
+use App\Filament\Concerns\UsesIndonesianLocale;
 use App\Filament\Resources\Collectors\CollectorResource;
 use Filament\Actions\CreateAction;
 use Filament\Resources\Pages\ListRecords;
 
 class ListCollectors extends ListRecords
 {
+    use UsesIndonesianLocale;
+
     protected static string $resource = CollectorResource::class;
 
     protected function getHeaderActions(): array

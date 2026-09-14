@@ -2,21 +2,25 @@
 
 namespace App\Filament\Resources\Sales\Pages;
 
+use App\Filament\Concerns\UsesIndonesianLocale;
 use App\Filament\Resources\Sales\SaleResource;
 use App\Models\Sale;
+use App\Services\SaleDraftService;
 use App\Services\SalePostingService;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
-use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
-use RuntimeException;
 use Throwable;
+use UnexpectedValueException;
 
 class EditSale extends EditRecord
 {
+    use UsesIndonesianLocale;
+
     protected static string $resource = SaleResource::class;
+
+    protected ?bool $hasDatabaseTransactions = true;
 
     /**
      * Judul halaman.
@@ -36,6 +40,7 @@ class EditSale extends EditRecord
              */
             Action::make('posting')
                 ->label('Posting Penjualan')
+                ->authorize(fn (): bool => SaleResource::canEdit($this->record))
                 ->icon('heroicon-o-check-circle')
                 ->color('success')
 
@@ -70,7 +75,7 @@ class EditSale extends EditRecord
                         $userId = auth()->id();
 
                         if (! $userId) {
-                            throw new RuntimeException(
+                            throw new UnexpectedValueException(
                                 'Pengguna tidak terautentikasi.'
                             );
                         }
@@ -104,7 +109,7 @@ class EditSale extends EditRecord
                         $this->redirect(
                             SaleResource::getUrl('index')
                         );
-                    } catch (RuntimeException $exception) {
+                    } catch (UnexpectedValueException $exception) {
                         /*
                          * Kesalahan aturan bisnis dapat ditampilkan
                          * langsung kepada operator.
@@ -145,6 +150,11 @@ class EditSale extends EditRecord
              * =========================================================
              */
             DeleteAction::make()
+                ->using(function (Sale $record): bool {
+                    app(SaleDraftService::class)->delete($record);
+
+                    return true;
+                })
                 ->label('Hapus Draft')
                 ->icon('heroicon-o-trash')
                 ->requiresConfirmation()
@@ -161,10 +171,15 @@ class EditSale extends EditRecord
      * Jangan menerima angka hasil perhitungan dari browser
      * sebagai angka resmi transaksi.
      */
+    protected function beforeValidate(): void
+    {
+        app(SaleDraftService::class)->lockDraft($this->record);
+    }
+
     protected function mutateFormDataBeforeSave(array $data): array
     {
         unset($data['sale_number']);
-        unset($data['status']);
+        unset($data['status'], $data['payment_status']);
 
         unset($data['total_weight']);
         unset($data['total_amount']);
@@ -188,68 +203,9 @@ class EditSale extends EditRecord
      */
     protected function afterSave(): void
     {
-        /*
-         * Hitung ulang subtotal setiap detail.
-         */
-        $this->record
-            ->items()
-            ->update([
-                'subtotal' => DB::raw(
-                    'ROUND(weight * price, 2)'
-                ),
-            ]);
-
-        /*
-         * Hitung total berat dan nilai penjualan.
-         */
-        $ringkasan = $this->record
-            ->items()
-            ->selectRaw(
-                '
-                    COALESCE(SUM(weight), 0) AS total_weight,
-                    COALESCE(SUM(subtotal), 0) AS total_amount
-                '
-            )
-            ->first();
-
-        /*
-         * Nomor transaksi mengikuti tanggal transaksi.
-         */
-        $tanggal = Carbon::parse(
-            $this->record->transaction_date
-        )->format('Ymd');
-
-        $nomorPenjualan =
-            'PJ-'
-            .$tanggal
-            .'-'
-            .str_pad(
-                (string) $this->record->getKey(),
-                6,
-                '0',
-                STR_PAD_LEFT
-            );
-
-        /*
-         * Draft belum memiliki HPP dan laba final.
-         */
-        $this->record->update([
-            'sale_number' => $nomorPenjualan,
-
-            'total_weight' => $ringkasan?->total_weight ?? 0,
-
-            'total_amount' => $ringkasan?->total_amount ?? 0,
-
-            'total_cost' => 0,
-            'gross_profit' => 0,
-
-            'status' => Sale::STATUS_DRAFT,
-        ]);
+        app(SaleDraftService::class)->recalculate($this->record);
     }
 
-    /**
-     * Tombol formulir bagian bawah.
-     */
     protected function getFormActions(): array
     {
         return [

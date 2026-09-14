@@ -13,6 +13,7 @@ class SalePayment extends Model
 
     protected $fillable = [
         'payment_number',
+        'idempotency_key',
         'sale_id',
         'payment_date',
         'amount',
@@ -30,6 +31,7 @@ class SalePayment extends Model
     {
         return [
             'payment_date' => 'date',
+            'verified_at' => 'datetime',
             'amount' => 'decimal:2',
             'cancelled_at' => 'datetime',
         ];
@@ -38,6 +40,11 @@ class SalePayment extends Model
     /**
      * Transaksi penjualan yang dibayar.
      */
+    public function verifiedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'verified_by');
+    }
+
     public function sale(): BelongsTo
     {
         return $this->belongsTo(Sale::class);

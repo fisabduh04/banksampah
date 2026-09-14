@@ -13,6 +13,8 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Auth\Access\Response;
+use Illuminate\Database\Eloquent\Model;
 
 class WithdrawalResource extends Resource
 {
@@ -41,6 +43,23 @@ class WithdrawalResource extends Resource
     public static function table(Table $table): Table
     {
         return WithdrawalsTable::configure($table);
+    }
+
+    public static function getEditAuthorizationResponse(Model $record): Response
+    {
+        return $record->status === 'draft' ? parent::getEditAuthorizationResponse($record)
+            : Response::deny('Transaksi final tidak dapat diubah.');
+    }
+
+    public static function getDeleteAuthorizationResponse(Model $record): Response
+    {
+        return $record->status === 'draft' ? parent::getDeleteAuthorizationResponse($record)
+            : Response::deny('Riwayat transaksi final tidak dapat dihapus.');
+    }
+
+    public static function canDeleteAny(): bool
+    {
+        return false;
     }
 
     public static function getRelations(): array
