@@ -2,7 +2,6 @@
 
 namespace App\Filament\Resources\InventoryMovements\Pages;
 
-use App\Filament\Concerns\UsesIndonesianLocale;
 use App\Filament\Exports\InventoryMovementExporter;
 use App\Filament\Resources\InventoryMovements\InventoryMovementResource;
 use Filament\Actions\ExportAction;
@@ -10,8 +9,6 @@ use Filament\Resources\Pages\ListRecords;
 
 class ListInventoryMovements extends ListRecords
 {
-    use UsesIndonesianLocale;
-
     /**
      * Resource teknis untuk fitur Mutasi Persediaan.
      */
@@ -30,11 +27,6 @@ class ListInventoryMovements extends ListRecords
      * Karena seluruh mutasi harus berasal otomatis
      * dari transaksi yang sah.
      */
-    public function getSubheading(): ?string
-    {
-        return 'Biaya historis disajikan kembali pada tanggal transaksi sumber. Koreksi nilai tidak menambah barang masuk atau keluar. Tanggal pembukuan dan waktu pencatatan tetap ditampilkan untuk audit.';
-    }
-
     protected function getHeaderActions(): array
     {
         return [

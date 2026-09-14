@@ -19,9 +19,11 @@ class User extends Authenticatable implements FilamentUser
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
 
-    protected $attributes = ['financial_role' => 'operator'];
-
-    /** @return array<string, string> */
+    /**
+     * Mendapatkan konversi tipe data atribut pengguna.
+     *
+     * @return array<string, string>
+     */
     protected function casts(): array
     {
         return [
@@ -30,17 +32,12 @@ class User extends Authenticatable implements FilamentUser
         ];
     }
 
-    /** Kewenangan pembukuan terpisah dari persetujuan dan administrasi. */
-    public function canPerformFinancialOperation(string $operation): bool
-    {
-        return match ($operation) {
-            'record' => in_array($this->financial_role, ['operator', 'finance_manager', 'administrator'], true),
-            'approve' => in_array($this->financial_role, ['finance_manager', 'administrator'], true),
-            'administer' => $this->financial_role === 'administrator',
-            default => false,
-        };
-    }
-
+    /**
+     * Menentukan apakah pengguna boleh mengakses panel administrasi.
+     *
+     * Saat ini seluruh akun yang dibuat oleh administrator
+     * diperbolehkan mengakses panel.
+     */
     public function canAccessPanel(Panel $panel): bool
     {
         return true;

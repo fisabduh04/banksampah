@@ -3,17 +3,16 @@
 namespace App\Filament\Resources\Deposits\Tables;
 
 use App\Services\DepositService;
+use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Forms\Components\DatePicker;
-use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
-use UnexpectedValueException;
 
 class DepositsTable
 {
@@ -117,7 +116,6 @@ class DepositsTable
                     ->visible(fn ($record) => $record->status === 'draft'),
 
                 Action::make('post')
-                    ->authorize(fn (): bool => auth()->user()?->canPerformFinancialOperation('record') ?? false)
                     ->label('Posting')
                     ->icon('heroicon-o-check-circle')
                     ->color('success')
@@ -128,7 +126,7 @@ class DepositsTable
                     )
                     ->modalSubmitActionLabel('Ya, Posting')
                     ->visible(fn ($record) => $record->status === 'draft')
-                    ->action(function ($record, array $data): void {
+                    ->action(function ($record) {
                         try {
                             app(DepositService::class)->post($record);
 
@@ -138,7 +136,7 @@ class DepositsTable
                                 ->success()
                                 ->send();
 
-                        } catch (UnexpectedValueException $e) {
+                        } catch (Exception $e) {
                             Notification::make()
                                 ->title('Posting Gagal')
                                 ->body($e->getMessage())
@@ -148,8 +146,6 @@ class DepositsTable
                     }),
 
                 Action::make('cancel')
-                    ->authorize(fn (): bool => auth()->user()?->canPerformFinancialOperation('approve') ?? false)
-                    ->schema([Textarea::make('reason')->label('Alasan Pembatalan')->required()->maxLength(2000)])
                     ->label('Batalkan')
                     ->icon('heroicon-o-x-circle')
                     ->color('danger')
@@ -160,9 +156,9 @@ class DepositsTable
                     )
                     ->modalSubmitActionLabel('Ya, Batalkan')
                     ->visible(fn ($record) => $record->status === 'posted')
-                    ->action(function ($record, array $data): void {
+                    ->action(function ($record) {
                         try {
-                            app(DepositService::class)->cancel($record, $data['reason']);
+                            app(DepositService::class)->cancel($record);
 
                             Notification::make()
                                 ->title('Pembatalan Berhasil')
@@ -170,7 +166,7 @@ class DepositsTable
                                 ->success()
                                 ->send();
 
-                        } catch (UnexpectedValueException $e) {
+                        } catch (Exception $e) {
                             Notification::make()
                                 ->title('Pembatalan Gagal')
                                 ->body($e->getMessage())

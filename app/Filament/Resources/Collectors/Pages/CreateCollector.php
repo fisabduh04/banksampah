@@ -2,14 +2,11 @@
 
 namespace App\Filament\Resources\Collectors\Pages;
 
-use App\Filament\Concerns\UsesIndonesianLocale;
 use App\Filament\Resources\Collectors\CollectorResource;
 use Filament\Resources\Pages\CreateRecord;
 
 class CreateCollector extends CreateRecord
 {
-    use UsesIndonesianLocale;
-
     protected static string $resource = CollectorResource::class;
 
     /**
@@ -21,7 +18,11 @@ class CreateCollector extends CreateRecord
         return static::getResource()::getUrl('index');
     }
 
-    protected static bool $canCreateAnother = false;
+    // /**
+    //  * Nonaktifkan pilihan "Create & create another"
+    //  * agar alur input lebih sederhana.
+    //  */
+    // protected static bool $canCreateAnother = false;
 
     /**
      * Pesan setelah data berhasil disimpan.

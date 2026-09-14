@@ -91,7 +91,6 @@ class DepositForm
 
                         TextInput::make('weight')
                             ->label('Berat')
-                            ->minValue(0.001)->rule('decimal:0,3')
                             ->numeric()
                             ->suffix('kg')
                             ->required()
@@ -109,7 +108,6 @@ class DepositForm
 
                         TextInput::make('price')
                             ->label('Harga')
-                            ->minValue(0.01)->rule('decimal:0,2')
                             ->numeric()
                             ->prefix('Rp')
                             ->required()

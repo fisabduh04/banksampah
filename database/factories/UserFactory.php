@@ -34,13 +34,8 @@ class UserFactory extends Factory
     }
 
     /**
-     * Petugas penyetuju keuangan untuk skenario pengujian.
+     * Indicate that the model's email address should be unverified.
      */
-    public function financeManager(): static
-    {
-        return $this->state(fn (array $attributes): array => ['financial_role' => 'finance_manager']);
-    }
-
     public function unverified(): static
     {
         return $this->state(fn (array $attributes) => [

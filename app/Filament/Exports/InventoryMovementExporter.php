@@ -25,11 +25,6 @@ class InventoryMovementExporter extends Exporter
      * Kolom teknis seperti ID, reference_type, dan reference_id
      * sengaja tidak ditampilkan agar file lebih mudah dipahami user.
      */
-    public static function modifyQuery(Builder $query): Builder
-    {
-        return $query->with('wasteType')->withStockReport();
-    }
-
     public static function getColumns(): array
     {
         return [
@@ -55,7 +50,7 @@ class InventoryMovementExporter extends Exporter
             ExportColumn::make('barang_masuk')
                 ->label('Masuk')
                 ->state(
-                    fn (InventoryMovement $record) => ! $record->isCostCorrection() && $record->movement_type === 'in'
+                    fn (InventoryMovement $record) => $record->movement_type === 'in'
                             ? $record->quantity
                             : null
                 ),
@@ -68,7 +63,7 @@ class InventoryMovementExporter extends Exporter
             ExportColumn::make('barang_keluar')
                 ->label('Keluar')
                 ->state(
-                    fn (InventoryMovement $record) => ! $record->isCostCorrection() && $record->movement_type === 'out'
+                    fn (InventoryMovement $record) => $record->movement_type === 'out'
                             ? $record->quantity
                             : null
                 ),
@@ -83,11 +78,51 @@ class InventoryMovementExporter extends Exporter
              */
             ExportColumn::make('stok')
                 ->label('Stok')
-                ->state(fn (InventoryMovement $record): string => (string) $record->running_quantity),
-            ExportColumn::make('effective_date')->label('Tanggal Sumber Biaya'),
-            ExportColumn::make('total_cost')->label('Nilai Mutasi'),
-            ExportColumn::make('reference_type')->label('Jenis Mutasi'),
-            ExportColumn::make('created_at')->label('Waktu Pencatatan'),
+                ->state(function (InventoryMovement $record): float {
+                    $totalMasuk = InventoryMovement::query()
+                        ->where('waste_type_id', $record->waste_type_id)
+                        ->where(function (Builder $query) use ($record) {
+                            $query
+                                ->whereDate(
+                                    'transaction_date',
+                                    '<',
+                                    $record->transaction_date
+                                )
+                                ->orWhere(function (Builder $query) use ($record) {
+                                    $query
+                                        ->whereDate(
+                                            'transaction_date',
+                                            $record->transaction_date
+                                        )
+                                        ->where('id', '<=', $record->id);
+                                });
+                        })
+                        ->where('movement_type', 'in')
+                        ->sum('quantity');
+
+                    $totalKeluar = InventoryMovement::query()
+                        ->where('waste_type_id', $record->waste_type_id)
+                        ->where(function (Builder $query) use ($record) {
+                            $query
+                                ->whereDate(
+                                    'transaction_date',
+                                    '<',
+                                    $record->transaction_date
+                                )
+                                ->orWhere(function (Builder $query) use ($record) {
+                                    $query
+                                        ->whereDate(
+                                            'transaction_date',
+                                            $record->transaction_date
+                                        )
+                                        ->where('id', '<=', $record->id);
+                                });
+                        })
+                        ->where('movement_type', 'out')
+                        ->sum('quantity');
+
+                    return (float) $totalMasuk - (float) $totalKeluar;
+                }),
 
             /**
              * Keterangan sumber perubahan stok.

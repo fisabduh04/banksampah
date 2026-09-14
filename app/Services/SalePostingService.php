@@ -5,12 +5,9 @@ namespace App\Services;
 use App\Models\InventoryMovement;
 use App\Models\Sale;
 use App\Models\SaleItem;
-use App\Models\SalePayment;
 use App\Models\WasteType;
-use Brick\Math\BigDecimal;
-use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\DB;
-use UnexpectedValueException;
+use RuntimeException;
 
 class SalePostingService
 {
@@ -19,8 +16,7 @@ class SalePostingService
      * untuk membaca, mengunci, dan mengurangi persediaan.
      */
     public function __construct(
-        private readonly InventoryService $inventoryService,
-        private readonly FinancialControlService $controls,
+        private readonly InventoryService $inventoryService
     ) {}
 
     /**
@@ -33,9 +29,7 @@ class SalePostingService
         Sale $sale,
         int $userId
     ): void {
-        $this->controls->authorize('record', $userId);
         DB::transaction(function () use ($sale, $userId): void {
-            $this->controls->ensureOpen(now()->toDateString());
 
             /*
              * =========================================================
@@ -49,7 +43,6 @@ class SalePostingService
                 ->whereKey($sale->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
-            $this->controls->ensureOpen($lockedSale->transaction_date->toDateString());
 
             /*
              * =========================================================
@@ -57,7 +50,7 @@ class SalePostingService
              * =========================================================
              */
             if ($lockedSale->status !== Sale::STATUS_DRAFT) {
-                throw new UnexpectedValueException(
+                throw new RuntimeException(
                     'Hanya transaksi Draft yang dapat diposting.'
                 );
             }
@@ -67,16 +60,16 @@ class SalePostingService
              * 3. VALIDASI PENGEPUL
              * =========================================================
              */
-            $lockedSale->setRelation('collector', $lockedSale->collector()->lockForUpdate()->first());
+            $lockedSale->load('collector');
 
             if (! $lockedSale->collector) {
-                throw new UnexpectedValueException(
+                throw new RuntimeException(
                     'Pengepul pada transaksi tidak ditemukan.'
                 );
             }
 
             if (! $lockedSale->collector->is_active) {
-                throw new UnexpectedValueException(
+                throw new RuntimeException(
                     'Pengepul pada transaksi sudah tidak aktif.'
                 );
             }
@@ -100,7 +93,7 @@ class SalePostingService
                 ->get();
 
             if ($items->isEmpty()) {
-                throw new UnexpectedValueException(
+                throw new RuntimeException(
                     'Transaksi belum memiliki rincian sampah.'
                 );
             }
@@ -119,7 +112,7 @@ class SalePostingService
                 ->exists();
 
             if ($existingMovement) {
-                throw new UnexpectedValueException(
+                throw new RuntimeException(
                     'Mutasi persediaan transaksi ini sudah pernah dibuat.'
                 );
             }
@@ -130,35 +123,34 @@ class SalePostingService
              * =========================================================
              */
             foreach ($items as $item) {
-                $item->setRelation('wasteType', WasteType::query()->whereKey($item->waste_type_id)->lockForUpdate()->first());
                 if (! $item->wasteType) {
-                    throw new UnexpectedValueException(
+                    throw new RuntimeException(
                         'Terdapat jenis sampah yang tidak ditemukan.'
                     );
                 }
 
                 if (! $item->wasteType->is_active) {
-                    throw new UnexpectedValueException(
+                    throw new RuntimeException(
                         'Jenis sampah "'
                         .$item->wasteType->name
                         .'" sudah tidak aktif.'
                     );
                 }
 
-                $weight = BigDecimal::of($item->weight);
-                $price = BigDecimal::of($item->price);
-                $subtotal = BigDecimal::of($item->subtotal);
+                $weight = (float) $item->weight;
+                $price = (float) $item->price;
+                $subtotal = (float) $item->subtotal;
 
-                if ($weight->isLessThanOrEqualTo(0)) {
-                    throw new UnexpectedValueException(
+                if ($weight <= 0) {
+                    throw new RuntimeException(
                         'Berat '
                         .$item->wasteType->name
                         .' harus lebih dari nol.'
                     );
                 }
 
-                if ($price->isLessThanOrEqualTo(0)) {
-                    throw new UnexpectedValueException(
+                if ($price <= 0) {
+                    throw new RuntimeException(
                         'Harga jual '
                         .$item->wasteType->name
                         .' harus lebih dari nol.'
@@ -168,9 +160,17 @@ class SalePostingService
                 /*
                  * Hitung ulang subtotal sebagai pemeriksaan.
                  */
-                $expectedSubtotal = $weight->multipliedBy($price)->toScale(2, RoundingMode::HalfUp);
-                if (! $subtotal->isEqualTo($expectedSubtotal)) {
-                    throw new UnexpectedValueException(
+                $expectedSubtotal = round(
+                    $weight * $price,
+                    2
+                );
+
+                if (
+                    abs(
+                        $subtotal - $expectedSubtotal
+                    ) > 0.01
+                ) {
+                    throw new RuntimeException(
                         'Subtotal '
                         .$item->wasteType->name
                         .' tidak sesuai dengan berat dan harga jual.'
@@ -183,13 +183,51 @@ class SalePostingService
              * 7. HITUNG ULANG TOTAL TRANSAKSI
              * =========================================================
              */
-            $totalWeight = BigDecimal::of(0);
-            $totalAmount = BigDecimal::of(0);
-            $totalCost = BigDecimal::of(0);
-            foreach ($items as $item) {
-                $totalWeight = $totalWeight->plus($item->weight);
-                $totalAmount = $totalAmount->plus($item->subtotal);
+            $totalWeight = round(
+                $items->sum(
+                    fn (SaleItem $item): float => (float) $item->weight
+                ),
+                3
+            );
+
+            $totalAmount = round(
+                $items->sum(
+                    fn (SaleItem $item): float => (float) $item->subtotal
+                ),
+                2
+            );
+
+            /*
+             * Angka header harus sama dengan rincian.
+             */
+            if (
+                abs(
+                    (float) $lockedSale->total_weight
+                    - $totalWeight
+                ) > 0.001
+            ) {
+                throw new RuntimeException(
+                    'Total berat penjualan tidak sesuai dengan rincian.'
+                );
             }
+
+            if (
+                abs(
+                    (float) $lockedSale->total_amount
+                    - $totalAmount
+                ) > 0.01
+            ) {
+                throw new RuntimeException(
+                    'Total nilai penjualan tidak sesuai dengan rincian.'
+                );
+            }
+
+            /*
+             * =========================================================
+             * 8. KELUARKAN PERSEDIAAN DAN HITUNG HPP
+             * =========================================================
+             */
+            $totalCost = 0.00;
 
             foreach ($items as $item) {
                 /*
@@ -202,7 +240,7 @@ class SalePostingService
                  */
                 $movement = $this->inventoryService->issue(
                     wasteTypeId: (int) $item->waste_type_id,
-                    quantity: $item->weight,
+                    quantity: (float) $item->weight,
                     referenceType: 'sale',
                     referenceId: (int) $lockedSale->id,
                     transactionDate: $lockedSale
@@ -216,15 +254,19 @@ class SalePostingService
                  * HPP resmi diambil dari nilai persediaan
                  * yang dikeluarkan oleh InventoryService.
                  */
-                $costPrice = $movement->unit_cost;
-                $costTotal = $movement->total_cost;
+                $costPrice = (float) $movement->unit_cost;
+                $costTotal = (float) $movement->total_cost;
 
                 /*
                  * Laba kotor per item.
                  *
                  * Penjualan - HPP
                  */
-                $grossProfit = (string) BigDecimal::of($item->subtotal)->minus($costTotal)->toScale(2);
+                $grossProfit = round(
+                    (float) $item->subtotal
+                    - $costTotal,
+                    2
+                );
 
                 /*
                  * Simpan snapshot HPP pada SaleItem.
@@ -238,15 +280,23 @@ class SalePostingService
                     'gross_profit' => $grossProfit,
                 ]);
 
-                $totalCost = $totalCost->plus($costTotal);
+                $totalCost += $costTotal;
             }
+
+            $totalCost = round(
+                $totalCost,
+                2
+            );
 
             /*
              * =========================================================
              * 9. HITUNG LABA KOTOR TRANSAKSI
              * =========================================================
              */
-            $grossProfit = (string) $totalAmount->minus($totalCost)->toScale(2);
+            $grossProfit = round(
+                $totalAmount - $totalCost,
+                2
+            );
 
             /*
              * =========================================================
@@ -254,10 +304,10 @@ class SalePostingService
              * =========================================================
              */
             $lockedSale->update([
-                'total_weight' => (string) $totalWeight->toScale(3),
-                'total_amount' => (string) $totalAmount->toScale(2),
+                'total_weight' => $totalWeight,
+                'total_amount' => $totalAmount,
 
-                'total_cost' => (string) $totalCost,
+                'total_cost' => $totalCost,
                 'gross_profit' => $grossProfit,
 
                 'status' => Sale::STATUS_POSTED,
@@ -291,13 +341,11 @@ class SalePostingService
         int $userId,
         string $reason
     ): void {
-        $this->controls->authorize('approve', $userId);
         DB::transaction(function () use (
             $sale,
             $userId,
             $reason
         ): void {
-            $this->controls->ensureOpen(now()->toDateString());
 
             /*
              * =========================================================
@@ -307,7 +355,7 @@ class SalePostingService
             $reason = trim($reason);
 
             if ($reason === '') {
-                throw new UnexpectedValueException(
+                throw new RuntimeException(
                     'Alasan pembatalan wajib diisi.'
                 );
             }
@@ -321,13 +369,12 @@ class SalePostingService
                 ->whereKey($sale->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
-            $this->controls->ensureOpen($lockedSale->transaction_date->toDateString());
 
             /*
              * Hanya transaksi Posted yang boleh dibatalkan.
              */
             if ($lockedSale->status !== Sale::STATUS_POSTED) {
-                throw new UnexpectedValueException(
+                throw new RuntimeException(
                     'Hanya transaksi yang sudah diposting yang dapat dibatalkan.'
                 );
             }
@@ -338,23 +385,19 @@ class SalePostingService
  *
  * Pembayaran harus dibatalkan terlebih dahulu.
  */
-            $activePayments = SalePayment::query()
+            $activePaymentAmount = (float) SalePayment::query()
                 ->where('sale_id', $lockedSale->id)
                 ->where(
                     'status',
                     SalePayment::STATUS_POSTED
                 )
-                ->lockForUpdate()->get(['amount']);
-            $activePaymentAmount = BigDecimal::of(0);
-            foreach ($activePayments as $payment) {
-                $activePaymentAmount = $activePaymentAmount->plus($payment->amount);
-            }
+                ->sum('amount');
 
-            if ($activePayments->isNotEmpty()) {
-                throw new UnexpectedValueException(
+            if ($activePaymentAmount > 0) {
+                throw new RuntimeException(
                     'Penjualan masih memiliki pembayaran aktif sebesar Rp '
                     .number_format(
-                        (float) (string) $activePaymentAmount,
+                        $activePaymentAmount,
                         0,
                         ',',
                         '.'
@@ -381,7 +424,7 @@ class SalePostingService
                 ->exists();
 
             if ($existingReversal) {
-                throw new UnexpectedValueException(
+                throw new RuntimeException(
                     'Pembatalan penjualan ini sudah pernah diproses.'
                 );
             }
@@ -402,7 +445,7 @@ class SalePostingService
                 ->get();
 
             if ($items->isEmpty()) {
-                throw new UnexpectedValueException(
+                throw new RuntimeException(
                     'Rincian transaksi penjualan tidak ditemukan.'
                 );
             }
@@ -418,18 +461,18 @@ class SalePostingService
              * atau biaya rata-rata sekarang.
              */
             foreach ($items as $item) {
-                $quantity = $item->weight;
-                $unitCost = $item->cost_price;
-                $totalCost = $item->cost_total;
+                $quantity = (float) $item->weight;
+                $unitCost = (float) $item->cost_price;
+                $totalCost = (float) $item->cost_total;
 
-                if (BigDecimal::of($quantity)->isLessThanOrEqualTo(0)) {
-                    throw new UnexpectedValueException(
+                if ($quantity <= 0) {
+                    throw new RuntimeException(
                         'Berat rincian penjualan tidak valid.'
                     );
                 }
 
-                if (BigDecimal::of($totalCost)->isLessThan(0)) {
-                    throw new UnexpectedValueException(
+                if ($totalCost < 0) {
+                    throw new RuntimeException(
                         'Nilai HPP transaksi tidak valid.'
                     );
                 }
@@ -464,7 +507,7 @@ class SalePostingService
                      * HPP transaksi penjualan asal.
                      */
                     'unit_cost' => $unitCost,
-                    'total_cost' => (string) $totalCost,
+                    'total_cost' => $totalCost,
 
                     'reference_type' => 'sale_cancellation',
 

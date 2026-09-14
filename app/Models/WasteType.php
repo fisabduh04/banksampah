@@ -11,6 +11,7 @@ class WasteType extends Model
     protected $fillable = [
         'waste_category_id',
         'code',
+        'stock',
         'name',
         'unit',
         'is_active',

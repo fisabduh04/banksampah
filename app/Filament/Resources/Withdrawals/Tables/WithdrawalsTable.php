@@ -2,21 +2,17 @@
 
 namespace App\Filament\Resources\Withdrawals\Tables;
 
-use App\Models\Withdrawal;
 use App\Services\WithdrawalService;
+use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Forms\Components\DatePicker;
-use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
-use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
-use UnexpectedValueException;
 
 class WithdrawalsTable
 {
@@ -24,10 +20,6 @@ class WithdrawalsTable
     {
         return $table
             ->columns([
-                TextColumn::make('verified_at')->label('Verifikasi Bukti')->dateTime('d/m/Y H:i')->placeholder('Belum diverifikasi'),
-                TextColumn::make('verification_reference')->label('Bukti Penyerahan')->placeholder('-')->toggleable(),
-                TextColumn::make('refund_reference')->label('Bukti Uang Kembali')->placeholder('-')->toggleable(),
-                TextColumn::make('cancellation_reason')->label('Alasan Pembatalan')->placeholder('-')->wrap()->toggleable(),
                 TextColumn::make('withdrawal_number')
                     ->label('No. Penarikan')
                     ->searchable()
@@ -113,24 +105,11 @@ class WithdrawalsTable
                     }),
             ])
             ->recordActions([
-                Action::make('verify')->label('Verifikasi Penyerahan Dana')
-                    ->authorize(fn (): bool => auth()->user()?->canPerformFinancialOperation('approve') ?? false)
-                    ->visible(fn (Withdrawal $record): bool => $record->status === 'posted' && $record->verified_at === null)
-                    ->schema([TextInput::make('reference')->label('Referensi Bukti Penyerahan Dana')->required()->maxLength(100)])
-                    ->action(function (Withdrawal $record, array $data): void {
-                        try {
-                            app(WithdrawalService::class)->verifyWithdrawal($record, $data['reference'], (int) auth()->id());
-                            Notification::make()->title('Bukti penyerahan dana diverifikasi')->success()->send();
-                        } catch (UnexpectedValueException $exception) {
-                            Notification::make()->title('Verifikasi ditolak')->body($exception->getMessage())->danger()->send();
-                        }
-                    }),
                 EditAction::make()
                     ->label('Ubah')
                     ->visible(fn ($record) => $record->status === 'draft'),
 
                 Action::make('post')
-                    ->authorize(fn (): bool => auth()->user()?->canPerformFinancialOperation('record') ?? false)
                     ->label('Posting')
                     ->icon('heroicon-o-check-circle')
                     ->color('success')
@@ -141,7 +120,7 @@ class WithdrawalsTable
                     )
                     ->modalSubmitActionLabel('Ya, Posting')
                     ->visible(fn ($record) => $record->status === 'draft')
-                    ->action(function ($record, array $data): void {
+                    ->action(function ($record) {
                         try {
                             app(WithdrawalService::class)->post($record);
 
@@ -150,7 +129,7 @@ class WithdrawalsTable
                                 ->body('Penarikan saldo telah dibukukan.')
                                 ->success()
                                 ->send();
-                        } catch (UnexpectedValueException $e) {
+                        } catch (Exception $e) {
                             Notification::make()
                                 ->title('Posting Gagal')
                                 ->body($e->getMessage())
@@ -160,10 +139,6 @@ class WithdrawalsTable
                     }),
 
                 Action::make('cancel')
-                    ->authorize(fn (): bool => auth()->user()?->canPerformFinancialOperation('approve') ?? false)
-                    ->schema([Textarea::make('reason')->label('Alasan Pembatalan')->required()->maxLength(2000),
-                        Select::make('cancellation_type')->label('Jenis Pembatalan')->options(['entry_error' => 'Salah catat, dana belum diserahkan', 'refund' => 'Dana dikembalikan nasabah'])->default('entry_error')->required(),
-                        TextInput::make('refund_reference')->label('Referensi Bukti Uang Kembali')->maxLength(100)])
                     ->label('Batalkan')
                     ->icon('heroicon-o-x-circle')
                     ->color('danger')
@@ -174,9 +149,9 @@ class WithdrawalsTable
                     )
                     ->modalSubmitActionLabel('Ya, Batalkan')
                     ->visible(fn ($record) => $record->status === 'posted')
-                    ->action(function ($record, array $data): void {
+                    ->action(function ($record) {
                         try {
-                            app(WithdrawalService::class)->cancel($record, $data['reason'], cancellationType: $data['cancellation_type'], refundReference: $data['refund_reference'] ?? null);
+                            app(WithdrawalService::class)->cancel($record);
 
                             Notification::make()
                                 ->title('Pembatalan Berhasil')
@@ -184,7 +159,7 @@ class WithdrawalsTable
                                 ->success()
                                 ->send();
 
-                        } catch (UnexpectedValueException $e) {
+                        } catch (Exception $e) {
                             Notification::make()
                                 ->title('Pembatalan Gagal')
                                 ->body($e->getMessage())
