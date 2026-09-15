@@ -100,6 +100,8 @@ class DepositService
                     'waste_type_id' => $item->waste_type_id,
                     'movement_type' => 'in',
                     'quantity' => $item->weight,
+                    'unit_cost' => $item->price,
+                    'total_cost' => $item->subtotal,
                     'reference_type' => 'deposit',
                     'reference_id' => $deposit->id,
                     'transaction_date' => $deposit->transaction_date,

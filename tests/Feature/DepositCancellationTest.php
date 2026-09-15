@@ -45,8 +45,9 @@ function cancellationRecords(string $cost = '100.00'): array
     $deposit->items()->create(['waste_type_id' => $waste->id, 'weight' => '10.000', 'price' => '10.00', 'subtotal' => '100.00']);
     app(DepositService::class)->post($deposit);
     $source = InventoryMovement::query()->where('reference_type', 'deposit')->where('reference_id', $deposit->id)->sole();
-    if ($cost !== '0.00') {
-        $source->update(['unit_cost' => '10.00', 'total_cost' => $cost]);
+    if ($cost === '0.00') {
+        /** Simulasi ledger lama sebelum biaya setoran dicatat oleh aplikasi. */
+        $source->update(['unit_cost' => '0.00', 'total_cost' => '0.00']);
     }
 
     return compact('deposit', 'source', 'customer', 'waste');
@@ -160,4 +161,63 @@ test('pembatalan menolak nilai persediaan kurang meskipun berat mencukupi', func
     $before = cancellationSnapshot($deposit);
     expect(fn () => app(DepositService::class)->cancel($deposit))->toThrow(Exception::class, 'nilai persediaan tidak seimbang');
     expect(cancellationSnapshot($deposit))->toBe($before);
+});
+
+test('posting mencatat biaya setiap bahan dari snapshot setoran', function (array $details, string $weight, string $amount): void {
+    $customer = Customer::create(['customer_code' => 'P-'.Str::ulid(), 'name' => 'Nasabah Uji Posting']);
+    $deposit = Deposit::create(['deposit_number' => 'P-'.Str::ulid(), 'customer_id' => $customer->id,
+        'transaction_date' => '2026-09-14', 'total_weight' => $weight, 'total_amount' => $amount, 'status' => 'draft']);
+    foreach ($details as [$itemWeight, $price, $subtotal]) {
+        $waste = WasteType::create(['code' => 'P-'.Str::ulid(), 'name' => 'Bahan Uji Posting']);
+        $deposit->items()->create(['waste_type_id' => $waste->id, 'weight' => $itemWeight, 'price' => $price, 'subtotal' => $subtotal]);
+    }
+    app(DepositService::class)->post($deposit);
+    expect($deposit->fresh()->status)->toBe('posted');
+    foreach ($deposit->items as $item) {
+        $movement = InventoryMovement::query()->where('reference_type', 'deposit')->where('reference_id', $deposit->id)
+            ->where('waste_type_id', $item->waste_type_id)->sole();
+        expect($movement)->quantity->toBe($item->weight)->unit_cost->toBe($item->price)->total_cost->toBe($item->subtotal);
+    }
+    expect(BalanceMutation::query()->where('reference_type', 'deposit')->where('reference_id', $deposit->id)->sole()->amount)->toBe($amount);
+    expect(InventoryMovement::query()->where('reference_type', 'deposit')->where('reference_id', $deposit->id)->sum('total_cost'))->toBe($amount);
+
+    app(DepositService::class)->cancel($deposit);
+    expect($deposit->status)->toBe('cancelled');
+    expect(InventoryMovement::query()->where('reference_type', 'deposit_cancellation')->where('reference_id', $deposit->id)->sum('total_cost'))->toBe($amount);
+})->with([
+    'satu bahan' => [[['10.000', '1000.00', '10000.00']], '10.000', '10000.00'],
+    'berat pecahan' => [[['1.255', '1234.56', '1549.37']], '1.255', '1549.37'],
+    'beberapa bahan' => [[['1.255', '1234.56', '1549.37'], ['2.000', '300.00', '600.00']], '3.255', '2149.37'],
+]);
+
+test('posting baru tetap berjalan dan tidak mengubah biaya nol pada setoran lama', function (): void {
+    ['deposit' => $old, 'source' => $source] = cancellationRecords('0.00');
+    $before = $source->getAttributes();
+    $new = $old->replicate();
+    $new->forceFill(['deposit_number' => 'NEW-'.Str::ulid(), 'status' => 'draft'])->save();
+    $new->items()->create(['waste_type_id' => $source->waste_type_id, 'weight' => '10.000', 'price' => '10.00', 'subtotal' => '100.00']);
+    app(DepositService::class)->post($new);
+    expect($new->fresh()->status)->toBe('posted');
+    expect($source->fresh()->getAttributes())->toBe($before);
+    expect(InventoryMovement::query()->where('reference_type', 'deposit')->where('reference_id', $new->id)->sole()->total_cost)->toBe('100.00');
+});
+
+test('kegagalan pencatatan biaya posting membatalkan status saldo dan seluruh stok baru', function (): void {
+    ['deposit' => $old, 'source' => $source] = cancellationRecords();
+    $new = $old->replicate();
+    $new->forceFill(['deposit_number' => 'FAIL-'.Str::ulid(), 'status' => 'draft'])->save();
+    $new->items()->create(['waste_type_id' => $source->waste_type_id, 'weight' => '10.000', 'price' => '10.00', 'subtotal' => '100.00']);
+    $before = cancellationSnapshot($new);
+    $event = 'eloquent.creating: '.InventoryMovement::class;
+    Event::listen($event, function (InventoryMovement $movement) use ($new): void {
+        if ($movement->reference_type === 'deposit' && $movement->reference_id === $new->id) {
+            throw new RuntimeException('Simulasi gagal mencatat biaya posting');
+        }
+    });
+    try {
+        expect(fn () => app(DepositService::class)->post($new))->toThrow(RuntimeException::class, 'Simulasi');
+        expect(cancellationSnapshot($new))->toBe($before);
+    } finally {
+        Event::forget($event);
+    }
 });
