@@ -13,6 +13,7 @@ class SalePayment extends Model
 
     protected $fillable = [
         'payment_number',
+        'idempotency_key',
         'sale_id',
         'payment_date',
         'amount',

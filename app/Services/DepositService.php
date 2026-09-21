@@ -17,6 +17,7 @@ class DepositService
     public function post(Deposit $deposit): void
     {
         DB::transaction(function () use ($deposit) {
+            $deposit = Deposit::query()->whereKey($deposit->id)->lockForUpdate()->firstOrFail();
             $deposit->load('items');
 
             if ($deposit->status !== 'draft') {
@@ -81,6 +82,27 @@ class DepositService
                 );
             }
 
+            $transactionDate = $deposit->transaction_date?->toDateString();
+            if ($transactionDate === null || $transactionDate > now()->toDateString()) {
+                throw new Exception('Tanggal setoran wajib diisi dan tidak boleh melewati hari ini. Gunakan tanggal barang benar-benar diterima sesuai bukti timbang.');
+            }
+            Customer::query()->whereKey($deposit->customer_id)->lockForUpdate()->firstOrFail();
+            $balances = BalanceMutation::query()->where('customer_id', $deposit->customer_id)->lockForUpdate()->get();
+            foreach ($balances as $mutation) {
+                if ($mutation->transaction_date->toDateString() > $transactionDate) {
+                    throw new Exception('Tanggal setoran tidak boleh mendahului mutasi saldo terakhir nasabah. Jika salah input, perbaiki tanggal pada draft sesuai bukti. Jika pencatatan terlambat, hubungi administrator untuk pemeriksaan saldo dan HPP; jangan mengganti tanggal hanya agar lolos.');
+                }
+            }
+            foreach ($deposit->items->pluck('waste_type_id')->unique()->sort() as $wasteTypeId) {
+                WasteType::query()->whereKey($wasteTypeId)->lockForUpdate()->firstOrFail();
+                $movements = InventoryMovement::query()->where('waste_type_id', $wasteTypeId)->lockForUpdate()->get();
+                foreach ($movements as $movement) {
+                    if ($movement->transaction_date->toDateString() > $transactionDate) {
+                        throw new Exception('Tanggal setoran tidak boleh mendahului mutasi persediaan terakhir bahan terkait. Jika salah input, perbaiki tanggal pada draft sesuai bukti. Jika pencatatan terlambat, hubungi administrator untuk pemeriksaan saldo dan HPP; jangan mengganti tanggal hanya agar lolos.');
+                    }
+                }
+            }
+
             $deposit->update([
                 'status' => 'posted',
             ]);
@@ -109,11 +131,13 @@ class DepositService
                 ]);
             }
         });
+        $deposit->refresh();
     }
 
-    public function cancel(Deposit $deposit): void
+    public function cancel(Deposit $deposit, string $reason, int $userId, bool $confirmedCorrection = false): void
     {
-        DB::transaction(function () use ($deposit): void {
+        $reason = app(CancellationReason::class)->describe($reason, $userId, $confirmedCorrection);
+        DB::transaction(function () use ($deposit, $reason): void {
             $record = Deposit::query()->whereKey($deposit->id)->lockForUpdate()->firstOrFail();
             if ($record->status !== 'posted') {
                 throw new Exception('Hanya transaksi yang telah dibukukan yang dapat dibatalkan.');
@@ -211,12 +235,12 @@ class DepositService
             BalanceMutation::create([
                 'customer_id' => $record->customer_id, 'type' => 'debit', 'amount' => $credits->first()->amount,
                 'reference_type' => 'deposit_cancellation', 'reference_id' => $record->id,
-                'transaction_date' => now()->toDateString(), 'description' => 'Pembatalan setoran nasabah '.$record->deposit_number,
+                'transaction_date' => now()->toDateString(), 'description' => 'Pembatalan setoran nasabah '.$record->deposit_number.' | '.$reason,
             ]);
             foreach ($plans as $plan) {
                 InventoryMovement::create([...$plan, 'movement_type' => 'out',
                     'reference_type' => 'deposit_cancellation', 'reference_id' => $record->id,
-                    'transaction_date' => now()->toDateString(), 'description' => 'Pembatalan setoran nasabah '.$record->deposit_number]);
+                    'transaction_date' => now()->toDateString(), 'description' => 'Pembatalan setoran nasabah '.$record->deposit_number.' | '.$reason]);
             }
             $record->update(['status' => 'cancelled']);
         }, attempts: 3);

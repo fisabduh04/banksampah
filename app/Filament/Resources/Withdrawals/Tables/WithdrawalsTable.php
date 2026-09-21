@@ -2,11 +2,13 @@
 
 namespace App\Filament\Resources\Withdrawals\Tables;
 
+use App\Filament\TransactionFailureNotification;
 use App\Services\WithdrawalService;
-use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
+use Filament\Forms\Components\Checkbox;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
@@ -129,12 +131,8 @@ class WithdrawalsTable
                                 ->body('Penarikan saldo telah dibukukan.')
                                 ->success()
                                 ->send();
-                        } catch (Exception $e) {
-                            Notification::make()
-                                ->title('Posting Gagal')
-                                ->body($e->getMessage())
-                                ->danger()
-                                ->send();
+                        } catch (\Throwable $exception) {
+                            TransactionFailureNotification::send($exception, 'Penarikan belum dapat dibukukan');
                         }
                     }),
 
@@ -142,29 +140,32 @@ class WithdrawalsTable
                     ->label('Batalkan')
                     ->icon('heroicon-o-x-circle')
                     ->color('danger')
+                    ->schema([
+                        Textarea::make('reason')->label('Alasan Koreksi')->required()->maxLength(2000)
+                            ->helperText('Jelaskan salah input. Jika tercatat ganda, cantumkan nomor transaksi yang benar.'),
+                        Checkbox::make('confirmed_correction')
+                            ->label('Saya telah memeriksa: ini koreksi pencatatan, bukan pengembalian uang atau barang.')
+                            ->rules(['accepted']),
+                    ])
                     ->requiresConfirmation()
                     ->modalHeading('Batalkan Penarikan')
                     ->modalDescription(
-                        'Saldo nasabah akan dikembalikan sebesar nilai penarikan. Transaksi tetap disimpan dalam riwayat.'
+                        'Koreksi ini membalik pencatatan penarikan. Jika uang benar-benar diserahkan, jangan gunakan tindakan ini sebagai pengembalian uang.'
                     )
                     ->modalSubmitActionLabel('Ya, Batalkan')
                     ->visible(fn ($record) => $record->status === 'posted')
-                    ->action(function ($record) {
+                    ->action(function ($record, array $data) {
                         try {
-                            app(WithdrawalService::class)->cancel($record);
+                            app(WithdrawalService::class)->cancel($record, $data['reason'], (int) auth()->id(), (bool) ($data['confirmed_correction'] ?? false));
 
                             Notification::make()
                                 ->title('Pembatalan Berhasil')
-                                ->body('Penarikan dibatalkan dan saldo nasabah telah dikembalikan.')
+                                ->body('Pencatatan penarikan dibatalkan dan saldo nasabah telah dikoreksi.')
                                 ->success()
                                 ->send();
 
-                        } catch (Exception $e) {
-                            Notification::make()
-                                ->title('Pembatalan Gagal')
-                                ->body($e->getMessage())
-                                ->danger()
-                                ->send();
+                        } catch (\Throwable $exception) {
+                            TransactionFailureNotification::send($exception, 'Penarikan belum dapat dibatalkan');
                         }
                     }),
             ])

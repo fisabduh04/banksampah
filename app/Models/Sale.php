@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Brick\Math\BigDecimal;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -116,22 +117,20 @@ class Sale extends Model
     /**
      * Total pembayaran yang masih sah.
      */
-    public function getPaidAmountAttribute(): float
+    public function getPaidAmountAttribute(): string
     {
-        return (float) $this->payments()
+        return (string) BigDecimal::of($this->payments()
             ->where('status', SalePayment::STATUS_POSTED)
-            ->sum('amount');
+            ->sum('amount'))->toScale(2);
     }
 
     /**
      * Sisa piutang pengepul.
      */
-    public function getOutstandingAmountAttribute(): float
+    public function getOutstandingAmountAttribute(): string
     {
-        return max(
-            0,
-            (float) $this->total_amount
-            - $this->paid_amount
-        );
+        $outstanding = BigDecimal::of($this->total_amount)->minus($this->paid_amount);
+
+        return $outstanding->isLessThan(0) ? '0.00' : (string) $outstanding->toScale(2);
     }
 }

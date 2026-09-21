@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Sales\Pages;
 
 use App\Filament\Resources\Sales\SaleResource;
+use App\Filament\TransactionFailureNotification;
 use App\Models\Sale;
 use App\Services\SalePostingService;
 use Filament\Actions\Action;
@@ -12,7 +13,6 @@ use Filament\Resources\Pages\EditRecord;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
-use Throwable;
 
 class EditSale extends EditRecord
 {
@@ -104,38 +104,8 @@ class EditSale extends EditRecord
                         $this->redirect(
                             SaleResource::getUrl('index')
                         );
-                    } catch (RuntimeException $exception) {
-                        /*
-                         * Kesalahan aturan bisnis dapat ditampilkan
-                         * langsung kepada operator.
-                         *
-                         * Contoh:
-                         * - stok tidak cukup;
-                         * - transaksi bukan Draft;
-                         * - harga tidak valid.
-                         */
-                        Notification::make()
-                            ->title('Penjualan tidak dapat diposting')
-                            ->body($exception->getMessage())
-                            ->danger()
-                            ->persistent()
-                            ->send();
-                    } catch (Throwable $exception) {
-                        /*
-                         * Kesalahan teknis tidak ditampilkan detailnya
-                         * kepada pengguna.
-                         */
-                        report($exception);
-
-                        Notification::make()
-                            ->title('Terjadi kesalahan')
-                            ->body(
-                                'Posting penjualan gagal diproses. '
-                                .'Silakan periksa log aplikasi.'
-                            )
-                            ->danger()
-                            ->persistent()
-                            ->send();
+                    } catch (\Throwable $exception) {
+                        TransactionFailureNotification::send($exception, 'Penjualan tidak dapat diposting');
                     }
                 }),
 

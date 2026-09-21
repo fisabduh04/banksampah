@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\InventoryMovement;
 use App\Models\Sale;
 use App\Models\SaleItem;
+use App\Models\SalePayment;
 use App\Models\WasteType;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -339,8 +340,10 @@ class SalePostingService
     public function cancel(
         Sale $sale,
         int $userId,
-        string $reason
+        string $reason,
+        bool $confirmedCorrection = false
     ): void {
+        $reason = app(CancellationReason::class)->describe($reason, $userId, $confirmedCorrection);
         DB::transaction(function () use (
             $sale,
             $userId,
@@ -377,6 +380,10 @@ class SalePostingService
                 throw new RuntimeException(
                     'Hanya transaksi yang sudah diposting yang dapat dibatalkan.'
                 );
+            }
+
+            if ($lockedSale->transaction_date->toDateString() > now()->toDateString()) {
+                throw new RuntimeException('Tanggal pembatalan tidak boleh mendahului penjualan asal.');
             }
 
             /*
@@ -485,6 +492,12 @@ class SalePostingService
                     ->whereKey($item->waste_type_id)
                     ->lockForUpdate()
                     ->firstOrFail();
+
+                $movements = InventoryMovement::query()->where('waste_type_id', $item->waste_type_id)
+                    ->lockForUpdate()->get();
+                if ($movements->contains(fn (InventoryMovement $movement): bool => $movement->transaction_date->toDateString() > now()->toDateString())) {
+                    throw new RuntimeException('Tanggal pembatalan mendahului riwayat persediaan. Periksa tanggal transaksi sumber sebelum koreksi.');
+                }
 
                 /*
                  * Buat mutasi pembalik.

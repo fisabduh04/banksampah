@@ -3,13 +3,16 @@
 namespace App\Filament\Resources\Sales\Tables;
 
 use App\Filament\Resources\Sales\SaleResource;
+use App\Filament\TransactionFailureNotification;
 use App\Models\Sale;
 use App\Services\SalePaymentService;
 use App\Services\SalePostingService;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
+use Filament\Forms\Components\Checkbox;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -17,8 +20,8 @@ use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Support\Str;
 use RuntimeException;
-use Throwable;
 
 class SalesTable
 {
@@ -257,7 +260,11 @@ class SalesTable
                             )
                             ->required()
                             ->rows(3)
-                            ->maxLength(2000),
+                            ->maxLength(2000)
+                            ->helperText('Jelaskan salah input. Jika tercatat ganda, cantumkan nomor transaksi yang benar.'),
+                        Checkbox::make('confirmed_correction')
+                            ->label('Saya telah memeriksa: ini koreksi pencatatan, bukan pengembalian uang atau barang.')
+                            ->rules(['accepted']),
                     ])
                     ->requiresConfirmation()
                     ->modalHeading('Batalkan Transaksi Penjualan?')
@@ -286,7 +293,8 @@ class SalesTable
                                 app(SalePostingService::class)->cancel(
                                     $record,
                                     (int) $userId,
-                                    $data['reason']
+                                    $data['reason'],
+                                    (bool) ($data['confirmed_correction'] ?? false)
                                 );
 
                                 Notification::make()
@@ -298,23 +306,8 @@ class SalesTable
                                     ->success()
                                     ->send();
 
-                            } catch (RuntimeException $exception) {
-                                Notification::make()
-                                    ->title('Penjualan tidak dapat dibatalkan')
-                                    ->body($exception->getMessage())
-                                    ->danger()
-                                    ->persistent()
-                                    ->send();
-
-                            } catch (Throwable $exception) {
-                                report($exception);
-
-                                Notification::make()
-                                    ->title('Terjadi kesalahan')
-                                    ->body($exception->getMessage())
-                                    ->danger()
-                                    ->persistent()
-                                    ->send();
+                            } catch (\Throwable $exception) {
+                                TransactionFailureNotification::send($exception, 'Penjualan tidak dapat dibatalkan');
                             }
                         }
                     ),
@@ -333,19 +326,33 @@ class SalesTable
                             && $record->payment_status !== 'paid'
                     )
                     ->form([
+                        Hidden::make('idempotency_key')->default(fn (): string => (string) Str::uuid())->required(),
                         DatePicker::make('payment_date')
+                            ->validationMessages([
+                                'required' => 'Isi tanggal uang benar-benar diterima.',
+                                'date' => 'Tanggal pembayaran tidak valid. Pilih tanggal sesuai bukti.',
+                            ])
                             ->label('Tanggal Pembayaran')
                             ->default(now())
                             ->required(),
 
                         TextInput::make('amount')
+                            ->validationMessages([
+                                'required' => 'Isi nominal uang sesuai bukti transaksi.',
+                                'numeric' => 'Nominal harus berupa angka.',
+                                'min' => 'Nominal minimal Rp :min.',
+                            ])
                             ->label('Jumlah Pembayaran')
                             ->numeric()
                             ->prefix('Rp')
                             ->required()
-                            ->minValue(1),
+                            ->minValue(0.01)
+                            ->step(0.01),
 
                         Select::make('payment_method')
+                            ->validationMessages([
+                                'required' => 'Pilih cara pembayaran sesuai bukti penerimaan uang.',
+                            ])
                             ->label('Metode Pembayaran')
                             ->options([
                                 'cash' => 'Tunai',
@@ -388,12 +395,13 @@ class SalesTable
                                 app(SalePaymentService::class)
                                     ->recordPayment(
                                         sale: $record,
-                                        amount: (float) $data['amount'],
+                                        amount: (string) $data['amount'],
                                         paymentDate: $data['payment_date'],
                                         paymentMethod: $data['payment_method'],
                                         referenceNumber: $data['reference_number'] ?? null,
                                         notes: $data['notes'] ?? null,
-                                        userId: (int) $userId
+                                        userId: (int) $userId,
+                                        idempotencyKey: $data['idempotency_key']
                                     );
 
                                 Notification::make()
@@ -406,29 +414,8 @@ class SalesTable
                                     ->success()
                                     ->send();
 
-                            } catch (RuntimeException $exception) {
-                                Notification::make()
-                                    ->title(
-                                        'Pembayaran tidak dapat dicatat'
-                                    )
-                                    ->body(
-                                        $exception->getMessage()
-                                    )
-                                    ->danger()
-                                    ->persistent()
-                                    ->send();
-
-                            } catch (Throwable $exception) {
-                                report($exception);
-
-                                Notification::make()
-                                    ->title('Terjadi kesalahan')
-                                    ->body(
-                                        'Pembayaran gagal disimpan. Silakan periksa log aplikasi.'
-                                    )
-                                    ->danger()
-                                    ->persistent()
-                                    ->send();
+                            } catch (\Throwable $exception) {
+                                TransactionFailureNotification::send($exception, 'Pembayaran tidak dapat dicatat');
                             }
                         }
                     ),

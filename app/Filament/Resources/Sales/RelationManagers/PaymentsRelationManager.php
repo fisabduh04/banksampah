@@ -2,9 +2,11 @@
 
 namespace App\Filament\Resources\Sales\RelationManagers;
 
+use App\Filament\TransactionFailureNotification;
 use App\Models\SalePayment;
 use App\Services\SalePaymentService;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Checkbox;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -12,7 +14,6 @@ use Filament\Schemas\Schema;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use RuntimeException;
-use Throwable;
 
 class PaymentsRelationManager extends RelationManager
 {
@@ -163,7 +164,11 @@ class PaymentsRelationManager extends RelationManager
                             )
                             ->required()
                             ->rows(3)
-                            ->maxLength(2000),
+                            ->maxLength(2000)
+                            ->helperText('Jelaskan salah input. Jika tercatat ganda, cantumkan nomor transaksi yang benar.'),
+                        Checkbox::make('confirmed_correction')
+                            ->label('Saya telah memeriksa: ini koreksi pencatatan, bukan pengembalian uang atau barang.')
+                            ->rules(['accepted']),
                     ])
 
                     ->requiresConfirmation()
@@ -199,7 +204,8 @@ class PaymentsRelationManager extends RelationManager
                                     ->cancelPayment(
                                         payment: $record,
                                         reason: $data['reason'],
-                                        userId: (int) $userId
+                                        userId: (int) $userId,
+                                        confirmedCorrection: (bool) ($data['confirmed_correction'] ?? false)
                                     );
 
                                 Notification::make()
@@ -212,29 +218,8 @@ class PaymentsRelationManager extends RelationManager
                                     ->success()
                                     ->send();
 
-                            } catch (RuntimeException $exception) {
-                                Notification::make()
-                                    ->title(
-                                        'Pembayaran tidak dapat dibatalkan'
-                                    )
-                                    ->body(
-                                        $exception->getMessage()
-                                    )
-                                    ->danger()
-                                    ->persistent()
-                                    ->send();
-
-                            } catch (Throwable $exception) {
-                                report($exception);
-
-                                Notification::make()
-                                    ->title('Terjadi kesalahan')
-                                    ->body(
-                                        $exception->getMessage()
-                                    )
-                                    ->danger()
-                                    ->persistent()
-                                    ->send();
+                            } catch (\Throwable $exception) {
+                                TransactionFailureNotification::send($exception, 'Pembayaran tidak dapat dibatalkan');
                             }
                         }
                     ),
