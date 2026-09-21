@@ -4,6 +4,10 @@ namespace App\Services;
 
 use App\Models\InventoryMovement;
 use App\Models\WasteType;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use RuntimeException;
 
 class InventoryService
@@ -161,10 +165,7 @@ class InventoryService
         /*
          * Periksa sekaligus kunci stok.
          */
-        $balance = $this->ensureAvailable(
-            $wasteTypeId,
-            $quantity
-        );
+        $balance = $this->balanceForIssue($wasteTypeId, $quantity, $transactionDate);
 
         $stockQuantity = (float) $balance['quantity'];
         $stockValue = (float) $balance['value'];
@@ -221,5 +222,50 @@ class InventoryService
 
             'description' => $description,
         ]);
+    }
+
+    /** @return array{quantity: float, value: float, average_cost: float} */
+    private function balanceForIssue(int $wasteTypeId, float $quantity, string $transactionDate): array
+    {
+        if (DB::transactionLevel() === 0) {
+            throw new RuntimeException('Pengeluaran persediaan wajib dilakukan dalam transaksi database.');
+        }
+        if (Validator::make(['date' => $transactionDate], ['date' => ['required', 'date_format:Y-m-d']])->fails()
+            || $transactionDate > now()->toDateString()) {
+            throw new RuntimeException('Tanggal penjualan wajib valid dan tidak boleh melewati hari ini. Gunakan tanggal penyerahan barang sesuai bukti transaksi.');
+        }
+        if ($quantity <= 0) {
+            throw new RuntimeException('Jumlah persediaan yang akan dikeluarkan harus lebih dari nol.');
+        }
+        WasteType::query()->whereKey($wasteTypeId)->lockForUpdate()->firstOrFail();
+        $movements = InventoryMovement::query()->where('waste_type_id', $wasteTypeId)
+            ->orderBy('transaction_date')->orderBy('id')->lockForUpdate()->get();
+        $stock = BigDecimal::of(0);
+        $value = BigDecimal::of(0);
+        foreach ($movements as $movement) {
+            if (! in_array($movement->movement_type, ['in', 'out'], true)
+                || BigDecimal::of($movement->quantity)->isLessThan(0)
+                || BigDecimal::of($movement->total_cost)->isLessThan(0)) {
+                throw new RuntimeException('Riwayat persediaan tidak valid. Periksa transaksi sumber.');
+            }
+            if ($movement->transaction_date->toDateString() > $transactionDate) {
+                if ($movement->movement_type !== 'in' || $movement->reference_type !== 'deposit') {
+                    throw new RuntimeException('Tanggal penjualan mendahului pengeluaran atau koreksi persediaan yang sudah dibukukan. Periksa dampak HPP melalui koreksi terkontrol; jangan mengubah tanggal kejadian hanya agar lolos.');
+                }
+
+                continue;
+            }
+            $stock = $movement->movement_type === 'in' ? $stock->plus($movement->quantity) : $stock->minus($movement->quantity);
+            $value = $movement->movement_type === 'in' ? $value->plus($movement->total_cost) : $value->minus($movement->total_cost);
+        }
+        if ($stock->isLessThan((string) $quantity)) {
+            throw new RuntimeException('Stok tidak mencukupi pada tanggal penjualan. Stok yang masuk setelah tanggal tersebut tidak dapat digunakan. Periksa jenis sampah, berat, tanggal penjualan, dan setoran yang sudah dibukukan. Jika ada setoran yang terlambat dicatat, minta administrator memeriksa urutan transaksi.');
+        }
+        if ($value->isLessThan(0)) {
+            throw new RuntimeException('Nilai persediaan pada tanggal penjualan negatif. Periksa biaya sumber.');
+        }
+
+        return ['quantity' => $stock->toFloat(), 'value' => $value->toFloat(),
+            'average_cost' => $value->dividedBy($stock, 2, RoundingMode::HalfUp)->toFloat()];
     }
 }

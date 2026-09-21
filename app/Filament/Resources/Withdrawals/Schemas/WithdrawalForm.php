@@ -24,6 +24,9 @@ class WithdrawalForm
                     ->default('Otomatis saat disimpan'),
 
                 Select::make('customer_id')
+                    ->validationMessages([
+                        'required' => 'Pilih nasabah yang melakukan transaksi.',
+                    ])
                     ->label('Nasabah')
                     ->relationship('customer', 'name')
                     ->searchable()
@@ -48,11 +51,20 @@ class WithdrawalForm
                     ->default(0),
 
                 DatePicker::make('transaction_date')
+                    ->validationMessages([
+                        'required' => 'Isi tanggal kejadian transaksi sesuai bukti.',
+                        'date' => 'Tanggal transaksi tidak valid. Pilih tanggal kejadian yang benar.',
+                    ])
                     ->label('Tanggal Transaksi')
                     ->default(now())
                     ->required(),
 
                 TextInput::make('amount')
+                    ->validationMessages([
+                        'required' => 'Isi nominal uang sesuai bukti transaksi.',
+                        'numeric' => 'Nominal harus berupa angka.',
+                        'min' => 'Nominal minimal Rp :min.',
+                    ])
                     ->label('Jumlah Penarikan')
                     ->prefix('Rp')
                     ->numeric()

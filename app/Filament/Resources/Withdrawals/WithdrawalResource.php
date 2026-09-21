@@ -13,6 +13,8 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Auth\Access\Response;
+use Illuminate\Database\Eloquent\Model;
 
 class WithdrawalResource extends Resource
 {
@@ -48,6 +50,16 @@ class WithdrawalResource extends Resource
         return [
             //
         ];
+    }
+
+    public static function getEditAuthorizationResponse(Model $record): Response
+    {
+        return $record->status === 'draft' ? parent::getEditAuthorizationResponse($record) : Response::deny('Hanya draft yang dapat diubah.');
+    }
+
+    public static function getDeleteAuthorizationResponse(Model $record): Response
+    {
+        return $record->status === 'draft' ? parent::getDeleteAuthorizationResponse($record) : Response::deny('Hanya draft yang dapat dihapus.');
     }
 
     public static function getPages(): array

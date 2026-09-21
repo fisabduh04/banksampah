@@ -44,6 +44,9 @@ class SaleForm
                             ),
 
                         Select::make('collector_id')
+                            ->validationMessages([
+                                'required' => 'Pilih pengepul yang membeli sampah.',
+                            ])
                             ->label('Pengepul')
                             ->relationship(
                                 name: 'collector',
@@ -62,6 +65,10 @@ class SaleForm
                             ->required(),
 
                         DatePicker::make('transaction_date')
+                            ->validationMessages([
+                                'required' => 'Isi tanggal kejadian transaksi sesuai bukti.',
+                                'date' => 'Tanggal transaksi tidak valid. Pilih tanggal kejadian yang benar.',
+                            ])
                             ->label('Tanggal Penjualan')
                             ->default(now())
                             ->required(),
@@ -93,6 +100,9 @@ class SaleForm
                             ->schema([
 
                                 Select::make('waste_type_id')
+                                    ->validationMessages([
+                                        'required' => 'Pilih jenis sampah pada rincian transaksi.',
+                                    ])
                                     ->label('Jenis Sampah')
                                     ->relationship(
                                         name: 'wasteType',
@@ -117,6 +127,11 @@ class SaleForm
                                     ->disableOptionsWhenSelectedInSiblingRepeaterItems(),
 
                                 TextInput::make('weight')
+                                    ->validationMessages([
+                                        'required' => 'Isi berat sampah dalam kilogram.',
+                                        'numeric' => 'Berat sampah harus berupa angka.',
+                                        'min' => 'Berat sampah minimal :min kg.',
+                                    ])
                                     ->label('Berat')
                                     ->numeric()
                                     ->suffix('kg')
@@ -136,6 +151,11 @@ class SaleForm
                                     ),
 
                                 TextInput::make('price')
+                                    ->validationMessages([
+                                        'required' => 'Harga belum tersedia. Periksa jenis sampah dan harga yang berlaku.',
+                                        'numeric' => 'Harga harus berupa angka.',
+                                        'min' => 'Harga minimal Rp :min.',
+                                    ])
                                     ->label('Harga Jual / kg')
                                     ->numeric()
                                     ->prefix('Rp')

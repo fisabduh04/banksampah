@@ -2,12 +2,14 @@
 
 namespace App\Filament\Resources\Deposits\Tables;
 
+use App\Filament\TransactionFailureNotification;
 use App\Models\BalanceMutation;
 use App\Services\DepositService;
-use Exception;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
+use Filament\Forms\Components\Checkbox;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
@@ -147,12 +149,8 @@ class DepositsTable
                                 ->success()
                                 ->send();
 
-                        } catch (Exception $e) {
-                            Notification::make()
-                                ->title('Posting Gagal')
-                                ->body($e->getMessage())
-                                ->danger()
-                                ->send();
+                        } catch (\Throwable $exception) {
+                            TransactionFailureNotification::send($exception, 'Setoran belum dapat dibukukan');
                         }
                     }),
 
@@ -160,16 +158,23 @@ class DepositsTable
                     ->label('Batalkan')
                     ->icon('heroicon-o-x-circle')
                     ->color('danger')
+                    ->schema([
+                        Textarea::make('reason')->label('Alasan Koreksi')->required()->maxLength(2000)
+                            ->helperText('Jelaskan salah input. Jika tercatat ganda, cantumkan nomor transaksi yang benar.'),
+                        Checkbox::make('confirmed_correction')
+                            ->label('Saya telah memeriksa: ini koreksi pencatatan, bukan pengembalian uang atau barang.')
+                            ->rules(['accepted']),
+                    ])
                     ->requiresConfirmation()
                     ->modalHeading('Batalkan Setoran')
                     ->modalDescription(
-                        'Nilai setoran akan dibalik dari saldo nasabah. Transaksi tetap disimpan dalam riwayat.'
+                        'Koreksi ini membalik pencatatan setoran. Pengembalian barang harus diproses terpisah. Riwayat asal tetap disimpan.'
                     )
                     ->modalSubmitActionLabel('Ya, Batalkan')
                     ->visible(fn ($record) => $record->status === 'posted')
-                    ->action(function ($record) {
+                    ->action(function ($record, array $data) {
                         try {
-                            app(DepositService::class)->cancel($record);
+                            app(DepositService::class)->cancel($record, $data['reason'], (int) auth()->id(), (bool) ($data['confirmed_correction'] ?? false));
 
                             Notification::make()
                                 ->title('Pembatalan Berhasil')
@@ -177,12 +182,8 @@ class DepositsTable
                                 ->success()
                                 ->send();
 
-                        } catch (Exception $e) {
-                            Notification::make()
-                                ->title('Pembatalan Gagal')
-                                ->body($e->getMessage())
-                                ->danger()
-                                ->send();
+                        } catch (\Throwable $exception) {
+                            TransactionFailureNotification::send($exception, 'Setoran belum dapat dibatalkan');
                         }
                     }),
             ])
