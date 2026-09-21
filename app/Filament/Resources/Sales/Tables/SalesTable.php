@@ -107,8 +107,7 @@ class SalesTable
                         )
                     )
                     ->alignEnd()
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->sortable(),
 
                 TextColumn::make('gross_profit')
                     ->label('Laba Kotor')
@@ -121,44 +120,37 @@ class SalesTable
                         )
                     )
                     ->alignEnd()
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->sortable(),
 
                 TextColumn::make('posted_at')
                     ->label('Waktu Posting')
                     ->dateTime('d/m/Y H:i')
                     ->placeholder('-')
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->sortable(),
 
                 TextColumn::make('postedBy.name')
                     ->label('Diposting Oleh')
-                    ->placeholder('-')
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->placeholder('-'),
 
                 TextColumn::make('cancelled_at')
                     ->label('Waktu Pembatalan')
                     ->dateTime('d/m/Y H:i')
                     ->placeholder('-')
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->sortable(),
 
                 TextColumn::make('cancelledBy.name')
                     ->label('Dibatalkan Oleh')
-                    ->placeholder('-')
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->placeholder('-'),
 
                 TextColumn::make('created_at')
                     ->label('Dibuat')
                     ->dateTime('d/m/Y H:i')
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->sortable(),
 
                 TextColumn::make('updated_at')
                     ->label('Terakhir Diubah')
                     ->dateTime('d/m/Y H:i')
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->sortable(),
 
                 TextColumn::make('payment_status')
                     ->label('Status Pembayaran')
