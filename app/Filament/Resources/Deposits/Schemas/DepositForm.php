@@ -2,12 +2,14 @@
 
 namespace App\Filament\Resources\Deposits\Schemas;
 
+use App\Models\Customer;
 use App\Models\WastePrice;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
+use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
@@ -25,13 +27,35 @@ class DepositForm
                     ->dehydrated(false),
 
                 Select::make('customer_id')
+                    ->validationMessages([
+                        'required' => 'Pilih nasabah yang melakukan transaksi.',
+                    ])
                     ->label('Nasabah')
                     ->relationship('customer', 'name')
                     ->searchable()
                     ->preload()
+                    ->live()
                     ->required(),
 
+                TextEntry::make('customer_balance')
+                    ->label('Saldo Nasabah Saat Ini')
+                    ->state(function (Get $get): ?float {
+                        $customerId = $get('customer_id');
+
+                        return filled($customerId)
+                            ? Customer::find($customerId)?->balance
+                            : null;
+                    })
+                    ->formatStateUsing(fn (float $state): string => 'Rp '.number_format($state, 2, ',', '.'))
+                    ->placeholder('Pilih nasabah untuk melihat saldo.')
+                    ->belowContent('Saldo dari transaksi yang sudah dibukukan. Setoran ini menambah saldo setelah diposting.')
+                    ->columnSpanFull(),
+
                 DatePicker::make('transaction_date')
+                    ->validationMessages([
+                        'required' => 'Isi tanggal kejadian transaksi sesuai bukti.',
+                        'date' => 'Tanggal transaksi tidak valid. Pilih tanggal kejadian yang benar.',
+                    ])
                     ->label('Tanggal Transaksi')
                     ->default(now())
                     ->required(),
@@ -58,6 +82,9 @@ class DepositForm
                     ->relationship('items')
                     ->schema([
                         Select::make('waste_type_id')
+                            ->validationMessages([
+                                'required' => 'Pilih jenis sampah pada rincian transaksi.',
+                            ])
                             ->label('Jenis Bahan')
                             ->relationship('wasteType', 'name')
                             ->searchable()
@@ -90,6 +117,11 @@ class DepositForm
                             }),
 
                         TextInput::make('weight')
+                            ->validationMessages([
+                                'required' => 'Isi berat sampah dalam kilogram.',
+                                'numeric' => 'Berat sampah harus berupa angka.',
+                                'min' => 'Berat sampah minimal :min kg.',
+                            ])
                             ->label('Berat')
                             ->numeric()
                             ->suffix('kg')
@@ -107,6 +139,11 @@ class DepositForm
                             }),
 
                         TextInput::make('price')
+                            ->validationMessages([
+                                'required' => 'Harga belum tersedia. Periksa jenis sampah dan harga yang berlaku.',
+                                'numeric' => 'Harga harus berupa angka.',
+                                'min' => 'Harga minimal Rp :min.',
+                            ])
                             ->label('Harga')
                             ->numeric()
                             ->prefix('Rp')
