@@ -2,14 +2,12 @@
 
 namespace App\Filament\Resources\Deposits\Schemas;
 
-use App\Models\Customer;
 use App\Models\WastePrice;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
-use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
@@ -36,20 +34,6 @@ class DepositForm
                     ->preload()
                     ->live()
                     ->required(),
-
-                TextEntry::make('customer_balance')
-                    ->label('Saldo Nasabah Saat Ini')
-                    ->state(function (Get $get): ?float {
-                        $customerId = $get('customer_id');
-
-                        return filled($customerId)
-                            ? Customer::find($customerId)?->balance
-                            : null;
-                    })
-                    ->formatStateUsing(fn (float $state): string => 'Rp '.number_format($state, 2, ',', '.'))
-                    ->placeholder('Pilih nasabah untuk melihat saldo.')
-                    ->belowContent('Saldo dari transaksi yang sudah dibukukan. Setoran ini menambah saldo setelah diposting.')
-                    ->columnSpanFull(),
 
                 DatePicker::make('transaction_date')
                     ->validationMessages([

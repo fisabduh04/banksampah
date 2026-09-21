@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Deposits\Tables;
 
+use App\Models\BalanceMutation;
 use App\Services\DepositService;
 use Exception;
 use Filament\Actions\Action;
@@ -19,6 +20,11 @@ class DepositsTable
     public static function configure(Table $table): Table
     {
         return $table
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->addSelect([
+                'customer_balance' => BalanceMutation::query()
+                    ->selectRaw("COALESCE(SUM(CASE WHEN type = 'credit' THEN amount WHEN type = 'debit' THEN -amount ELSE 0 END), 0)")
+                    ->whereColumn('customer_id', 'deposits.customer_id'),
+            ]))
             ->columns([
                 TextColumn::make('deposit_number')
                     ->label('No. Transaksi')
@@ -45,6 +51,11 @@ class DepositsTable
                     ->label('Total Nilai')
                     ->money('IDR')
                     ->sortable(),
+
+                TextColumn::make('customer_balance')
+                    ->label('Saldo Nasabah')
+                    ->money('IDR')
+                    ->tooltip('Saldo terkini nasabah dari seluruh mutasi yang sudah dibukukan.'),
 
                 TextColumn::make('status')
                     ->label('Status')

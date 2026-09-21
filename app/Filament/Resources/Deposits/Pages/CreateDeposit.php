@@ -3,8 +3,10 @@
 namespace App\Filament\Resources\Deposits\Pages;
 
 use App\Filament\Resources\Deposits\DepositResource;
+use App\Models\Customer;
 use App\Models\Deposit;
 use Filament\Resources\Pages\CreateRecord;
+use Illuminate\Contracts\View\View;
 
 class CreateDeposit extends CreateRecord
 {
@@ -30,6 +32,17 @@ class CreateDeposit extends CreateRecord
         );
 
         return $data;
+    }
+
+    public function getHeader(): ?View
+    {
+        $customerId = $this->data['customer_id'] ?? null;
+        $customer = filled($customerId) ? Customer::find($customerId) : null;
+
+        return view('deposit-form-header', [
+            'customerName' => $customer?->name,
+            'customerBalance' => $customer?->balance,
+        ]);
     }
 
     protected function getRedirectUrl(): string
