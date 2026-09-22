@@ -124,7 +124,10 @@ class WithdrawalsTable
                     ->visible(fn ($record) => $record->status === 'draft')
                     ->action(function ($record) {
                         try {
-                            app(WithdrawalService::class)->post($record);
+                            app(WithdrawalService::class)->post(
+                                withdrawal: $record,
+                                userId: auth()->id()
+                            );
 
                             Notification::make()
                                 ->title('Posting Berhasil')

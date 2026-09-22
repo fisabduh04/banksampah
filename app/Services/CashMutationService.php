@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
+use App\Models\Account;
 use App\Models\CashAccount;
 use App\Models\CashMutation;
 use App\Models\SalePayment;
 use App\Models\User;
+use App\Models\Withdrawal;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -31,9 +33,6 @@ class CashMutationService
         ?string $description,
         ?int $userId
     ): CashMutation {
-        /**
-         * Validasi nominal.
-         */
         if (
             ! preg_match('/^[0-9]{1,13}(\.[0-9]{1,2})?$/D', $amount)
             || BigDecimal::of($amount)->isLessThanOrEqualTo(0)
@@ -45,9 +44,6 @@ class CashMutationService
 
         $amount = (string) BigDecimal::of($amount)->toScale(2);
 
-        /**
-         * Validasi jenis mutasi.
-         */
         if (! in_array(
             $mutationType,
             [
@@ -61,9 +57,6 @@ class CashMutationService
             );
         }
 
-        /**
-         * Validasi tanggal transaksi.
-         */
         if (
             Validator::make(
                 ['date' => $transactionDate],
@@ -78,7 +71,10 @@ class CashMutationService
 
         $referenceType = trim($referenceType);
 
-        if ($referenceType === '' || mb_strlen($referenceType) > 50) {
+        if (
+            $referenceType === ''
+            || mb_strlen($referenceType) > 50
+        ) {
             throw new RuntimeException(
                 'Jenis referensi mutasi tidak valid.'
             );
@@ -123,10 +119,6 @@ class CashMutationService
             $description,
             $userId
         ): CashMutation {
-            /**
-             * Kunci akun untuk mencegah transaksi paralel
-             * memproses akun yang sama tanpa koordinasi.
-             */
             $cashAccount = CashAccount::query()
                 ->whereKey($cashAccountId)
                 ->lockForUpdate()
@@ -138,9 +130,6 @@ class CashMutationService
                 );
             }
 
-            /**
-             * Cegah transaksi sumber yang sama dicatat dua kali.
-             */
             if ($referenceId !== null) {
                 $existing = CashMutation::query()
                     ->where('cash_account_id', $cashAccount->id)
@@ -150,14 +139,12 @@ class CashMutationService
                     ->first();
 
                 if ($existing) {
-                    /**
-                     * Jika seluruh data sama, kembalikan record lama.
-                     * Ini membuat proses idempotent.
-                     */
                     if (
                         $existing->mutation_type === $mutationType
-                        && BigDecimal::of($existing->amount)->isEqualTo($amount)
-                        && $existing->transaction_date->toDateString() === $transactionDate
+                        && BigDecimal::of($existing->amount)
+                            ->isEqualTo($amount)
+                        && $existing->transaction_date
+                            ->toDateString() === $transactionDate
                         && $existing->reference_number === $referenceNumber
                     ) {
                         return $existing;
@@ -185,10 +172,6 @@ class CashMutationService
 
     /**
      * Membuat mutasi pembalik atas pembayaran penjualan.
-     *
-     * Mutasi pembayaran asal tidak dihapus.
-     * Sistem membuat mutasi OUT agar histori keuangan
-     * tetap dapat ditelusuri dan diaudit.
      */
     public function reverseSalePayment(
         SalePayment $payment,
@@ -210,19 +193,11 @@ class CashMutationService
             $payment,
             $userId
         ): CashMutation {
-            /**
-             * Akun tetap boleh digunakan untuk reversal meskipun
-             * sudah dinonaktifkan. Transaksi historis harus tetap
-             * dapat dikoreksi.
-             */
             $cashAccount = CashAccount::query()
                 ->whereKey($payment->cash_account_id)
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            /**
-             * Pastikan mutasi IN pembayaran asal benar-benar ada.
-             */
             $originalMutation = CashMutation::query()
                 ->where('cash_account_id', $cashAccount->id)
                 ->where('reference_type', 'sale_payment')
@@ -237,7 +212,8 @@ class CashMutationService
             }
 
             if (
-                $originalMutation->mutation_type !== CashMutation::TYPE_IN
+                $originalMutation->mutation_type
+                    !== CashMutation::TYPE_IN
                 || ! BigDecimal::of($originalMutation->amount)
                     ->isEqualTo($payment->amount)
             ) {
@@ -246,9 +222,6 @@ class CashMutationService
                 );
             }
 
-            /**
-             * Cegah reversal ganda.
-             */
             $existingReversal = CashMutation::query()
                 ->where('cash_account_id', $cashAccount->id)
                 ->where(
@@ -261,7 +234,8 @@ class CashMutationService
 
             if ($existingReversal) {
                 if (
-                    $existingReversal->mutation_type === CashMutation::TYPE_OUT
+                    $existingReversal->mutation_type
+                        === CashMutation::TYPE_OUT
                     && BigDecimal::of($existingReversal->amount)
                         ->isEqualTo($payment->amount)
                 ) {
@@ -289,13 +263,11 @@ class CashMutationService
     }
 
     /**
-     * Mencatat penerimaan Kas/Bank manual.
-     */
-    /**
-     * Mencatat penerimaan Kas/Bank manual.
+     * Mencatat penerimaan Kas/Bank manual sekaligus
+     * jurnal akuntansinya.
      *
-     * Pencatatan dilakukan atomik agar pengiriman ulang
-     * permintaan yang sama tidak menggandakan mutasi.
+     * Debit  Kas / Bank
+     * Kredit Akun Lawan
      */
     public function recordManualReceipt(
         int $cashAccountId,
@@ -303,6 +275,7 @@ class CashMutationService
         string $amount,
         ?string $referenceNumber,
         ?string $description,
+        int $counterAccountId,
         int $userId,
         string $idempotencyKey
     ): CashMutation {
@@ -343,6 +316,12 @@ class CashMutationService
             );
         }
 
+        if ($counterAccountId <= 0) {
+            throw new RuntimeException(
+                'Akun lawan penerimaan tidak valid.'
+            );
+        }
+
         $referenceNumber = trim($referenceNumber ?? '');
         $referenceNumber = $referenceNumber === ''
             ? null
@@ -368,6 +347,7 @@ class CashMutationService
             $amount,
             $referenceNumber,
             $description,
+            $counterAccountId,
             $userId,
             $idempotencyKey
         ): CashMutation {
@@ -387,14 +367,25 @@ class CashMutationService
                 ->lockForUpdate()
                 ->first();
 
+            /**
+             * Untuk penerimaan harus TYPE_IN
+             * dan reference_type manual_receipt.
+             */
             if ($existing) {
                 if (
                     $existing->cash_account_id !== $cashAccountId
-                    || $existing->mutation_type !== CashMutation::TYPE_IN
-                    || $existing->reference_type !== 'manual_receipt'
-                    || ! BigDecimal::of($existing->amount)->isEqualTo($amount)
-                    || $existing->transaction_date->toDateString() !== $transactionDate
-                    || $existing->reference_number !== $referenceNumber
+                    || $existing->counter_account_id
+                        !== $counterAccountId
+                    || $existing->mutation_type
+                        !== CashMutation::TYPE_IN
+                    || $existing->reference_type
+                        !== 'manual_receipt'
+                    || ! BigDecimal::of($existing->amount)
+                        ->isEqualTo($amount)
+                    || $existing->transaction_date
+                        ->toDateString() !== $transactionDate
+                    || $existing->reference_number
+                        !== $referenceNumber
                     || $existing->description !== $description
                     || $existing->created_by !== $userId
                 ) {
@@ -406,8 +397,28 @@ class CashMutationService
                 return $existing;
             }
 
-            return CashMutation::create([
+            $cashSystemKey = match ($cashAccount->account_type) {
+                CashAccount::TYPE_CASH => 'cash',
+                CashAccount::TYPE_BANK => 'bank',
+
+                default => throw new RuntimeException(
+                    'Jenis akun Kas/Bank tidak valid.'
+                ),
+            };
+
+            $cashLedgerAccount = Account::query()
+                ->where('system_key', $cashSystemKey)
+                ->firstOrFail();
+
+            if ($cashLedgerAccount->id === $counterAccountId) {
+                throw new RuntimeException(
+                    'Akun lawan tidak boleh sama dengan akun Kas/Bank.'
+                );
+            }
+
+            $mutation = CashMutation::create([
                 'cash_account_id' => $cashAccount->id,
+                'counter_account_id' => $counterAccountId,
                 'transaction_date' => $transactionDate,
                 'mutation_type' => CashMutation::TYPE_IN,
                 'amount' => $amount,
@@ -418,14 +429,41 @@ class CashMutationService
                 'description' => $description,
                 'created_by' => $userId,
             ]);
+
+            app(JournalService::class)->post(
+                transactionDate: $transactionDate,
+                referenceType: 'manual_receipt',
+                referenceId: (int) $mutation->id,
+                referenceNumber: $referenceNumber,
+                description: $description
+                    ?? 'Penerimaan Kas/Bank manual',
+                userId: $userId,
+                lines: [
+                    [
+                        'account_id' => $cashLedgerAccount->id,
+                        'debit' => $amount,
+                        'credit' => '0.00',
+                        'description' => 'Penerimaan '.$cashAccount->name,
+                    ],
+                    [
+                        'account_id' => $counterAccountId,
+                        'debit' => '0.00',
+                        'credit' => $amount,
+                        'description' => 'Akun lawan penerimaan Kas/Bank',
+                    ],
+                ]
+            );
+
+            return $mutation->fresh();
         }, attempts: 3);
     }
 
     /**
-     * Mencatat pengeluaran Kas/Bank manual.
+     * Mencatat pengeluaran Kas/Bank manual sekaligus
+     * jurnal akuntansinya.
      *
-     * Saldo diperiksa di dalam transaksi database
-     * setelah akun dikunci.
+     * Debit  Akun Lawan
+     * Kredit Kas / Bank
      */
     public function recordManualExpense(
         int $cashAccountId,
@@ -433,6 +471,7 @@ class CashMutationService
         string $amount,
         ?string $referenceNumber,
         ?string $description,
+        int $counterAccountId,
         int $userId,
         string $idempotencyKey
     ): CashMutation {
@@ -455,12 +494,65 @@ class CashMutationService
 
         $amount = (string) BigDecimal::of($amount)->toScale(2);
 
+        if (
+            Validator::make(
+                ['date' => $transactionDate],
+                ['date' => ['required', 'date_format:Y-m-d']]
+            )->fails()
+            || $transactionDate > now()->toDateString()
+        ) {
+            throw new RuntimeException(
+                'Tanggal pengeluaran tidak valid atau melewati hari ini.'
+            );
+        }
+
+        if (! User::query()->whereKey($userId)->exists()) {
+            throw new RuntimeException(
+                'Pengguna pencatat pengeluaran tidak ditemukan.'
+            );
+        }
+
+        if ($counterAccountId <= 0) {
+            throw new RuntimeException(
+                'Akun lawan pengeluaran tidak valid.'
+            );
+        }
+
+        $referenceNumber = trim($referenceNumber ?? '');
+        $referenceNumber = $referenceNumber === ''
+            ? null
+            : $referenceNumber;
+
+        $description = trim($description ?? '');
+        $description = $description === ''
+            ? null
+            : $description;
+
+        /**
+         * Validasi ini yang tadi Anda tanyakan.
+         *
+         * reference_number maksimal 100 karakter
+         * sesuai panjang kolom database.
+         *
+         * description dibatasi 2000 karakter
+         * agar input tidak berlebihan.
+         */
+        if (
+            mb_strlen($referenceNumber ?? '') > 100
+            || mb_strlen($description ?? '') > 2000
+        ) {
+            throw new RuntimeException(
+                'Nomor referensi atau keterangan pengeluaran terlalu panjang.'
+            );
+        }
+
         return DB::transaction(function () use (
             $cashAccountId,
             $transactionDate,
             $amount,
             $referenceNumber,
             $description,
+            $counterAccountId,
             $userId,
             $idempotencyKey
         ): CashMutation {
@@ -483,43 +575,101 @@ class CashMutationService
             if ($existing) {
                 if (
                     $existing->cash_account_id !== $cashAccountId
-                    || $existing->mutation_type !== CashMutation::TYPE_OUT
-                    || $existing->reference_type !== 'manual_expense'
-                    || ! BigDecimal::of($existing->amount)->isEqualTo($amount)
-                    || $existing->transaction_date->toDateString() !== $transactionDate
+                    || $existing->counter_account_id
+                        !== $counterAccountId
+                    || $existing->mutation_type
+                        !== CashMutation::TYPE_OUT
+                    || $existing->reference_type
+                        !== 'manual_expense'
+                    || ! BigDecimal::of($existing->amount)
+                        ->isEqualTo($amount)
+                    || $existing->transaction_date
+                        ->toDateString() !== $transactionDate
+                    || $existing->reference_number
+                        !== $referenceNumber
+                    || $existing->description !== $description
+                    || $existing->created_by !== $userId
                 ) {
                     throw new RuntimeException(
-                        'Pengenal transaksi sudah digunakan untuk data pengeluaran yang berbeda.'
+                        'Pengenal transaksi sudah digunakan untuk pengeluaran yang berbeda.'
                     );
                 }
 
                 return $existing;
             }
 
-            $incoming = CashMutation::query()
+            /**
+             * Hitung saldo dari histori ledger yang sudah dikunci.
+             */
+            $mutations = CashMutation::query()
                 ->where('cash_account_id', $cashAccount->id)
-                ->where('mutation_type', CashMutation::TYPE_IN)
+                ->orderBy('id')
                 ->lockForUpdate()
-                ->sum('amount');
+                ->get();
 
-            $outgoing = CashMutation::query()
-                ->where('cash_account_id', $cashAccount->id)
-                ->where('mutation_type', CashMutation::TYPE_OUT)
-                ->lockForUpdate()
-                ->sum('amount');
+            $balance = BigDecimal::of('0.00');
 
-            $balance = BigDecimal::of((string) $incoming)
-                ->minus((string) $outgoing);
+            foreach ($mutations as $mutation) {
+                /**
+                 * Jangan menganggap tipe selain IN otomatis OUT.
+                 * Data ledger yang tidak valid harus ditolak.
+                 */
+                if (
+                    ! in_array(
+                        $mutation->mutation_type,
+                        [
+                            CashMutation::TYPE_IN,
+                            CashMutation::TYPE_OUT,
+                        ],
+                        true
+                    )
+                    || BigDecimal::of($mutation->amount)
+                        ->isLessThan(0)
+                ) {
+                    throw new RuntimeException(
+                        'Riwayat Kas/Bank tidak valid.'
+                    );
+                }
 
-            if (BigDecimal::of($amount)->isGreaterThan($balance)) {
+                $balance =
+                    $mutation->mutation_type
+                        === CashMutation::TYPE_IN
+                    ? $balance->plus($mutation->amount)
+                    : $balance->minus($mutation->amount);
+            }
+
+            if (
+                BigDecimal::of($amount)
+                    ->isGreaterThan($balance)
+            ) {
                 throw new RuntimeException(
                     'Saldo Kas/Bank tidak mencukupi. Saldo tersedia Rp '
                     .$balance->toScale(2).'.'
                 );
             }
 
-            return CashMutation::create([
+            $cashSystemKey = match ($cashAccount->account_type) {
+                CashAccount::TYPE_CASH => 'cash',
+                CashAccount::TYPE_BANK => 'bank',
+
+                default => throw new RuntimeException(
+                    'Jenis akun Kas/Bank tidak valid.'
+                ),
+            };
+
+            $cashLedgerAccount = Account::query()
+                ->where('system_key', $cashSystemKey)
+                ->firstOrFail();
+
+            if ($cashLedgerAccount->id === $counterAccountId) {
+                throw new RuntimeException(
+                    'Akun lawan tidak boleh sama dengan akun Kas/Bank.'
+                );
+            }
+
+            $mutation = CashMutation::create([
                 'cash_account_id' => $cashAccount->id,
+                'counter_account_id' => $counterAccountId,
                 'transaction_date' => $transactionDate,
                 'mutation_type' => CashMutation::TYPE_OUT,
                 'amount' => $amount,
@@ -530,22 +680,287 @@ class CashMutationService
                 'description' => $description,
                 'created_by' => $userId,
             ]);
+
+            app(JournalService::class)->post(
+                transactionDate: $transactionDate,
+                referenceType: 'manual_expense',
+                referenceId: (int) $mutation->id,
+                referenceNumber: $referenceNumber,
+                description: $description
+                    ?? 'Pengeluaran Kas/Bank manual',
+                userId: $userId,
+                lines: [
+                    [
+                        'account_id' => $counterAccountId,
+                        'debit' => $amount,
+                        'credit' => '0.00',
+                        'description' => 'Akun lawan pengeluaran Kas/Bank',
+                    ],
+                    [
+                        'account_id' => $cashLedgerAccount->id,
+                        'debit' => '0.00',
+                        'credit' => $amount,
+                        'description' => 'Pengeluaran '.$cashAccount->name,
+                    ],
+                ]
+            );
+
+            return $mutation->fresh();
+        }, attempts: 3);
+    }
+
+    /**
+     * Mencatat uang keluar untuk penarikan saldo nasabah.
+     */
+    public function recordWithdrawal(
+        Withdrawal $withdrawal,
+        ?int $userId
+    ): CashMutation {
+        if ($withdrawal->cash_account_id === null) {
+            throw new RuntimeException(
+                'Penarikan belum memiliki sumber Kas/Bank.'
+            );
+        }
+
+        if (
+            $userId !== null
+            && ! User::query()->whereKey($userId)->exists()
+        ) {
+            throw new RuntimeException(
+                'Pengguna pencatat penarikan tidak ditemukan.'
+            );
+        }
+
+        if (
+            BigDecimal::of($withdrawal->amount)
+                ->isLessThanOrEqualTo(0)
+        ) {
+            throw new RuntimeException(
+                'Nominal penarikan tidak valid.'
+            );
+        }
+
+        $transactionDate =
+            $withdrawal->transaction_date?->toDateString();
+
+        if (
+            $transactionDate === null
+            || $transactionDate > now()->toDateString()
+        ) {
+            throw new RuntimeException(
+                'Tanggal penarikan Kas/Bank tidak valid.'
+            );
+        }
+
+        return DB::transaction(function () use (
+            $withdrawal,
+            $userId,
+            $transactionDate
+        ): CashMutation {
+            $cashAccount = CashAccount::query()
+                ->whereKey($withdrawal->cash_account_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (! $cashAccount->isActive()) {
+                throw new RuntimeException(
+                    'Akun Kas/Bank sumber penarikan sudah tidak aktif.'
+                );
+            }
+
+            $existing = CashMutation::query()
+                ->where('cash_account_id', $cashAccount->id)
+                ->where('reference_type', 'withdrawal')
+                ->where('reference_id', $withdrawal->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($existing) {
+                if (
+                    $existing->mutation_type
+                        === CashMutation::TYPE_OUT
+                    && BigDecimal::of($existing->amount)
+                        ->isEqualTo($withdrawal->amount)
+                ) {
+                    return $existing;
+                }
+
+                throw new RuntimeException(
+                    'Mutasi Kas/Bank penarikan sudah ada tetapi datanya tidak konsisten.'
+                );
+            }
+
+            $mutations = CashMutation::query()
+                ->where('cash_account_id', $cashAccount->id)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            $balance = BigDecimal::of('0.00');
+
+            foreach ($mutations as $mutation) {
+                if (
+                    ! in_array(
+                        $mutation->mutation_type,
+                        [
+                            CashMutation::TYPE_IN,
+                            CashMutation::TYPE_OUT,
+                        ],
+                        true
+                    )
+                    || BigDecimal::of($mutation->amount)
+                        ->isLessThan(0)
+                ) {
+                    throw new RuntimeException(
+                        'Riwayat Kas/Bank tidak valid.'
+                    );
+                }
+
+                $balance =
+                    $mutation->mutation_type
+                        === CashMutation::TYPE_IN
+                    ? $balance->plus($mutation->amount)
+                    : $balance->minus($mutation->amount);
+            }
+
+            if (
+                BigDecimal::of($withdrawal->amount)
+                    ->isGreaterThan($balance)
+            ) {
+                throw new RuntimeException(
+                    'Saldo Kas/Bank tidak mencukupi untuk penarikan. '
+                    .'Saldo tersedia Rp '
+                    .$balance->toScale(2).'.'
+                );
+            }
+
+            return CashMutation::create([
+                'cash_account_id' => $cashAccount->id,
+                'transaction_date' => $transactionDate,
+                'mutation_type' => CashMutation::TYPE_OUT,
+                'amount' => $withdrawal->amount,
+                'reference_type' => 'withdrawal',
+                'reference_id' => $withdrawal->id,
+                'reference_number' => $withdrawal->withdrawal_number,
+                'description' => 'Penarikan saldo nasabah '
+                    .$withdrawal->withdrawal_number,
+                'created_by' => $userId,
+            ]);
+        }, attempts: 3);
+    }
+
+    /**
+     * Membalik mutasi Kas/Bank akibat pembatalan penarikan.
+     */
+    public function reverseWithdrawal(
+        Withdrawal $withdrawal,
+        int $userId
+    ): CashMutation {
+        if ($withdrawal->cash_account_id === null) {
+            throw new RuntimeException(
+                'Penarikan tidak memiliki sumber Kas/Bank.'
+            );
+        }
+
+        if (! User::query()->whereKey($userId)->exists()) {
+            throw new RuntimeException(
+                'Pengguna pembatalan penarikan tidak ditemukan.'
+            );
+        }
+
+        return DB::transaction(function () use (
+            $withdrawal,
+            $userId
+        ): CashMutation {
+            $cashAccount = CashAccount::query()
+                ->whereKey($withdrawal->cash_account_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $original = CashMutation::query()
+                ->where('cash_account_id', $cashAccount->id)
+                ->where('reference_type', 'withdrawal')
+                ->where('reference_id', $withdrawal->id)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $original) {
+                throw new RuntimeException(
+                    'Mutasi Kas/Bank penarikan asal tidak ditemukan.'
+                );
+            }
+
+            if (
+                $original->mutation_type
+                    !== CashMutation::TYPE_OUT
+                || ! BigDecimal::of($original->amount)
+                    ->isEqualTo($withdrawal->amount)
+            ) {
+                throw new RuntimeException(
+                    'Mutasi Kas/Bank penarikan asal tidak konsisten.'
+                );
+            }
+
+            $existingReversal = CashMutation::query()
+                ->where('cash_account_id', $cashAccount->id)
+                ->where(
+                    'reference_type',
+                    'withdrawal_cancellation'
+                )
+                ->where('reference_id', $withdrawal->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($existingReversal) {
+                if (
+                    $existingReversal->mutation_type
+                        === CashMutation::TYPE_IN
+                    && BigDecimal::of($existingReversal->amount)
+                        ->isEqualTo($withdrawal->amount)
+                ) {
+                    return $existingReversal;
+                }
+
+                throw new RuntimeException(
+                    'Reversal Kas/Bank penarikan sudah ada tetapi datanya tidak konsisten.'
+                );
+            }
+
+            return CashMutation::create([
+                'cash_account_id' => $cashAccount->id,
+                'transaction_date' => now()->toDateString(),
+                'mutation_type' => CashMutation::TYPE_IN,
+                'amount' => $withdrawal->amount,
+                'reference_type' => 'withdrawal_cancellation',
+                'reference_id' => $withdrawal->id,
+                'reference_number' => 'REV-'.$withdrawal->withdrawal_number,
+                'description' => 'Pembatalan penarikan saldo '
+                    .$withdrawal->withdrawal_number,
+                'created_by' => $userId,
+            ]);
         }, attempts: 3);
     }
 
     /**
      * Menghitung saldo akun berdasarkan seluruh ledger.
      */
-    public function balance(CashAccount $cashAccount): string
-    {
+    public function balance(
+        CashAccount $cashAccount
+    ): string {
         $incoming = CashMutation::query()
             ->where('cash_account_id', $cashAccount->id)
-            ->where('mutation_type', CashMutation::TYPE_IN)
+            ->where(
+                'mutation_type',
+                CashMutation::TYPE_IN
+            )
             ->sum('amount');
 
         $outgoing = CashMutation::query()
             ->where('cash_account_id', $cashAccount->id)
-            ->where('mutation_type', CashMutation::TYPE_OUT)
+            ->where(
+                'mutation_type',
+                CashMutation::TYPE_OUT
+            )
             ->sum('amount');
 
         return (string) BigDecimal::of((string) $incoming)

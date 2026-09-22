@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
+use App\Models\Account;
 use App\Models\BalanceMutation;
 use App\Models\Customer;
 use App\Models\Deposit;
 use App\Models\InventoryMovement;
+use App\Models\JournalEntry;
 use App\Models\WasteType;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -14,9 +16,9 @@ use Illuminate\Support\Facades\DB;
 
 class DepositService
 {
-    public function post(Deposit $deposit): void
+    public function post(Deposit $deposit, ?int $userId = null): void
     {
-        DB::transaction(function () use ($deposit) {
+        DB::transaction(function () use ($deposit, $userId) {
             $deposit = Deposit::query()->whereKey($deposit->id)->lockForUpdate()->firstOrFail();
             $deposit->load('items');
 
@@ -105,6 +107,8 @@ class DepositService
 
             $deposit->update([
                 'status' => 'posted',
+                'posted_at' => now(),
+                'posted_by' => $userId,
             ]);
 
             BalanceMutation::create([
@@ -130,6 +134,46 @@ class DepositService
                     'description' => 'Setoran nasabah '.$deposit->deposit_number,
                 ]);
             }
+
+            /**
+             * =========================================================
+             * JURNAL OTOMATIS SETORAN NASABAH
+             * =========================================================
+             *
+             * Debit  Persediaan Sampah
+             * Kredit Tabungan Nasabah
+             */
+            $inventoryAccount = Account::query()
+                ->where('system_key', 'inventory')
+                ->firstOrFail();
+
+            $customerSavingsAccount = Account::query()
+                ->where('system_key', 'customer_savings')
+                ->firstOrFail();
+
+            app(JournalService::class)->post(
+                transactionDate: $transactionDate,
+                referenceType: 'deposit',
+                referenceId: (int) $deposit->id,
+                referenceNumber: $deposit->deposit_number,
+                description: 'Setoran nasabah '.$deposit->deposit_number,
+                userId: $userId,
+                lines: [
+                    [
+                        'account_id' => $inventoryAccount->id,
+                        'debit' => (string) $deposit->total_amount,
+                        'credit' => '0.00',
+                        'description' => 'Persediaan dari setoran nasabah',
+                    ],
+                    [
+                        'account_id' => $customerSavingsAccount->id,
+                        'debit' => '0.00',
+                        'credit' => (string) $deposit->total_amount,
+                        'description' => 'Penambahan saldo tabungan nasabah',
+                    ],
+                ]
+            );
+
         });
         $deposit->refresh();
     }
@@ -137,7 +181,7 @@ class DepositService
     public function cancel(Deposit $deposit, string $reason, int $userId, bool $confirmedCorrection = false): void
     {
         $reason = app(CancellationReason::class)->describe($reason, $userId, $confirmedCorrection);
-        DB::transaction(function () use ($deposit, $reason): void {
+        DB::transaction(function () use ($deposit, $reason, $userId): void {
             $record = Deposit::query()->whereKey($deposit->id)->lockForUpdate()->firstOrFail();
             if ($record->status !== 'posted') {
                 throw new Exception('Hanya transaksi yang telah dibukukan yang dapat dibatalkan.');
@@ -241,6 +285,44 @@ class DepositService
                 InventoryMovement::create([...$plan, 'movement_type' => 'out',
                     'reference_type' => 'deposit_cancellation', 'reference_id' => $record->id,
                     'transaction_date' => now()->toDateString(), 'description' => 'Pembatalan setoran nasabah '.$record->deposit_number.' | '.$reason]);
+            }
+
+            /**
+             * =========================================================
+             * REVERSAL JURNAL SETORAN
+             * =========================================================
+             *
+             * Jurnal asal:
+             * Debit  Persediaan Sampah
+             * Kredit Tabungan Nasabah
+             *
+             * Reversal:
+             * Debit  Tabungan Nasabah
+             * Kredit Persediaan Sampah
+             */
+            $originalJournal = JournalEntry::query()
+                ->where('reference_type', 'deposit')
+                ->where('reference_id', $record->id)
+                ->lockForUpdate()
+                ->first();
+
+            /**
+             * Transaksi lama sebelum Fase 8 mungkin belum mempunyai jurnal.
+             * Untuk kompatibilitas, pembatalan transaksi lama tetap
+             * diperbolehkan. Jurnal historis akan kita tangani terpisah
+             * melalui proses backfill/migrasi akuntansi.
+             */
+            if ($originalJournal !== null) {
+                app(JournalService::class)->reverse(
+                    journalEntry: $originalJournal,
+                    transactionDate: now()->toDateString(),
+                    referenceType: 'deposit_cancellation',
+                    referenceId: (int) $record->id,
+                    referenceNumber: 'REV-'.$record->deposit_number,
+                    description: 'Pembatalan setoran nasabah '
+                        .$record->deposit_number,
+                    userId: $userId
+                );
             }
             $record->update(['status' => 'cancelled']);
         }, attempts: 3);

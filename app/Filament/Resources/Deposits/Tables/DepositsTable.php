@@ -141,7 +141,7 @@ class DepositsTable
                     ->visible(fn ($record) => $record->status === 'draft')
                     ->action(function ($record) {
                         try {
-                            app(DepositService::class)->post($record);
+                            app(DepositService::class)->post($record, userId: auth()->id());
 
                             Notification::make()
                                 ->title('Posting Berhasil')

@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Models\Account;
 use App\Models\InventoryMovement;
+use App\Models\JournalEntry;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\SalePayment;
@@ -317,6 +319,70 @@ class SalePostingService
                 'posted_by' => $userId,
             ]);
 
+            /**
+             * =========================================================
+             * JURNAL OTOMATIS PENJUALAN
+             * =========================================================
+             *
+             * 1. Mengakui penjualan:
+             *    Debit  Piutang Pengepul
+             *    Kredit Pendapatan Penjualan
+             *
+             * 2. Mengakui HPP:
+             *    Debit  Harga Pokok Penjualan
+             *    Kredit Persediaan Sampah
+             */
+            $receivableAccount = Account::query()
+                ->where('system_key', 'collector_receivable')
+                ->firstOrFail();
+
+            $salesRevenueAccount = Account::query()
+                ->where('system_key', 'sales_revenue')
+                ->firstOrFail();
+
+            $cogsAccount = Account::query()
+                ->where('system_key', 'cogs')
+                ->firstOrFail();
+
+            $inventoryAccount = Account::query()
+                ->where('system_key', 'inventory')
+                ->firstOrFail();
+
+            app(JournalService::class)->post(
+                transactionDate: $lockedSale->transaction_date->toDateString(),
+                referenceType: 'sale',
+                referenceId: (int) $lockedSale->id,
+                referenceNumber: $lockedSale->sale_number,
+                description: 'Penjualan ke pengepul '.$lockedSale->sale_number,
+                userId: $userId,
+                lines: [
+                    [
+                        'account_id' => $receivableAccount->id,
+                        'debit' => (string) $totalAmount,
+                        'credit' => '0.00',
+                        'description' => 'Piutang penjualan ke pengepul',
+                    ],
+                    [
+                        'account_id' => $salesRevenueAccount->id,
+                        'debit' => '0.00',
+                        'credit' => (string) $totalAmount,
+                        'description' => 'Pendapatan penjualan sampah',
+                    ],
+                    [
+                        'account_id' => $cogsAccount->id,
+                        'debit' => (string) $totalCost,
+                        'credit' => '0.00',
+                        'description' => 'Harga pokok penjualan',
+                    ],
+                    [
+                        'account_id' => $inventoryAccount->id,
+                        'debit' => '0.00',
+                        'credit' => (string) $totalCost,
+                        'description' => 'Pengurangan persediaan sampah',
+                    ],
+                ]
+            );
+
             /*
              * Jika terjadi deadlock database,
              * Laravel diberi kesempatan mencoba ulang.
@@ -535,6 +601,34 @@ class SalePostingService
                     'description' => 'Pembatalan penjualan '
                         .$lockedSale->sale_number,
                 ]);
+            }
+
+            /**
+             * =========================================================
+             * REVERSAL JURNAL PENJUALAN
+             * =========================================================
+             */
+            $originalJournal = JournalEntry::query()
+                ->where('reference_type', 'sale')
+                ->where('reference_id', $lockedSale->id)
+                ->lockForUpdate()
+                ->first();
+
+            /**
+             * Penjualan historis sebelum Fase 8 mungkin belum
+             * mempunyai jurnal akuntansi.
+             */
+            if ($originalJournal !== null) {
+                app(JournalService::class)->reverse(
+                    journalEntry: $originalJournal,
+                    transactionDate: now()->toDateString(),
+                    referenceType: 'sale_cancellation',
+                    referenceId: (int) $lockedSale->id,
+                    referenceNumber: 'REV-'.$lockedSale->sale_number,
+                    description: 'Pembatalan penjualan '
+                        .$lockedSale->sale_number,
+                    userId: $userId
+                );
             }
 
             /*

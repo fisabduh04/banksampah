@@ -8,6 +8,7 @@ use App\Models\WasteType;
 use App\Models\Withdrawal;
 use App\Services\DepositService;
 use App\Services\WithdrawalService;
+use Database\Seeders\AccountSeeder;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Process\Process;
@@ -128,6 +129,8 @@ test('MySQL melindungi saldo saat penarikan dan pembatalan bersamaan', function 
             throw new RuntimeException('Koneksi database pengujian tidak sesuai.');
         }
         Artisan::call('migrate', ['--database' => 'withdrawal_race', '--force' => true, '--no-interaction' => true]);
+        app(AccountSeeder::class)->run();
+
         $user = User::factory()->create();
         $customer = Customer::create(['customer_code' => 'RACE', 'name' => 'Nasabah Uji Persaingan']);
         $waste = WasteType::create(['code' => 'RACE', 'name' => 'Bahan Uji Persaingan']);

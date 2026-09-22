@@ -13,6 +13,7 @@ class CashMutation extends Model
 
     protected $fillable = [
         'cash_account_id',
+        'counter_account_id',
         'transaction_date',
         'mutation_type',
         'amount',
@@ -59,5 +60,16 @@ class CashMutation extends Model
     public function isOutgoing(): bool
     {
         return $this->mutation_type === self::TYPE_OUT;
+    }
+
+    /**
+     * Akun akuntansi lawan untuk transaksi manual.
+     */
+    public function counterAccount(): BelongsTo
+    {
+        return $this->belongsTo(
+            Account::class,
+            'counter_account_id'
+        );
     }
 }

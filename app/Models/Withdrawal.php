@@ -14,6 +14,7 @@ class Withdrawal extends Model
         'amount',
         'status',
         'notes',
+        'cash_account_id',
     ];
 
     protected function casts(): array
@@ -27,5 +28,13 @@ class Withdrawal extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    /**
+     * Kas/Bank yang digunakan untuk membayar penarikan.
+     */
+    public function cashAccount(): BelongsTo
+    {
+        return $this->belongsTo(CashAccount::class);
     }
 }
