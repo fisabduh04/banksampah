@@ -18,6 +18,7 @@ class SalePayment extends Model
         'payment_date',
         'amount',
         'payment_method',
+        'cash_account_id',
         'reference_number',
         'status',
         'received_by',
@@ -80,5 +81,13 @@ class SalePayment extends Model
     public function isCancelled(): bool
     {
         return $this->status === self::STATUS_CANCELLED;
+    }
+
+    /**
+     * Akun Kas/Bank tempat pembayaran diterima.
+     */
+    public function cashAccount(): BelongsTo
+    {
+        return $this->belongsTo(CashAccount::class);
     }
 }

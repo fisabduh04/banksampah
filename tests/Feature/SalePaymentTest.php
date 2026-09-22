@@ -1,10 +1,13 @@
 <?php
 
 use App\Filament\Resources\Sales\Pages\ListSales;
+use App\Models\CashAccount;
+use app\Models\CashMutation;
 use App\Models\Collector;
 use App\Models\Sale;
 use App\Models\SalePayment;
 use App\Models\User;
+use App\Services\CashMutationService;
 use App\Services\SalePaymentService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -34,7 +37,7 @@ afterEach(function (): void {
     }
 });
 
-/** @return array{sale: Sale, user: User} */
+/** @return array{sale: Sale, user: User, cashAccount: CashAccount} */
 function paymentInvoice(string $total = '100.00'): array
 {
     test()->travelTo(now()->setDate(2026, 9, 14)->setTime(10, 0));
@@ -43,7 +46,16 @@ function paymentInvoice(string $total = '100.00'): array
     $sale = Sale::create(['sale_number' => 'PJ-'.Str::ulid(), 'collector_id' => $collector->id,
         'transaction_date' => '2026-09-13', 'status' => 'posted', 'total_amount' => $total, 'posted_by' => $user->id, 'posted_at' => now()]);
 
-    return compact('sale', 'user');
+    $cashAccount = CashAccount::firstOrCreate(
+        ['code' => 'KAS-TEST'],
+        [
+            'name' => 'Kas Pengujian',
+            'account_type' => CashAccount::TYPE_CASH,
+            'is_active' => true,
+        ]
+    );
+
+    return compact('sale', 'user', 'cashAccount');
 }
 
 /** @param array<string, mixed> $overrides */
@@ -174,33 +186,83 @@ test('kegagalan pembaruan penjualan membatalkan seluruh pencatatan pembayaran', 
 });
 
 test('form pembayaran menyimpan pengenal otomatis dan nominal desimal', function (): void {
-    ['sale' => $sale, 'user' => $user] = paymentInvoice();
+    ['sale' => $sale, 'user' => $user, 'cashAccount' => $cashAccount] = paymentInvoice();
+
     $this->actingAs($user);
 
-    Livewire::test(ListSales::class)->callTableAction('catatPembayaran', $sale, data: [
-        'amount' => '99.99', 'payment_date' => '2026-09-14', 'payment_method' => 'cash',
-    ])->assertHasNoTableActionErrors();
+    Livewire::test(ListSales::class)
+        ->callTableAction(
+            'catatPembayaran',
+            $sale,
+            data: [
+                'amount' => '99.99',
+                'payment_date' => '2026-09-14',
+                'payment_method' => 'cash',
+                'cash_account_id' => $cashAccount->id,
+            ]
+        )
+        ->assertHasNoTableActionErrors();
 
     $payment = SalePayment::where('sale_id', $sale->id)->sole();
+
+    $mutation = CashMutation::where('reference_type', 'sale_payment')
+        ->where('reference_id', $payment->id)
+        ->sole();
+
+    expect($mutation->cash_account_id)->toBe($cashAccount->id);
+    expect($mutation->mutation_type)->toBe(CashMutation::TYPE_IN);
+    expect($mutation->amount)->toBe('99.99');
+    expect($mutation->reference_number)->toBe($payment->payment_number);
+
     expect(Str::isUuid($payment->idempotency_key))->toBeTrue();
     expect($payment->amount)->toBe('99.99');
     expect($sale->fresh()->outstanding_amount)->toBe('0.01');
 });
 
 test('form mempertahankan pengenal ketika validasi gagal dan pengiriman diulang', function (): void {
-    ['sale' => $sale, 'user' => $user] = paymentInvoice();
-    $this->actingAs($user);
-    $component = Livewire::test(ListSales::class)->mountTableAction('catatPembayaran', $sale);
-    $key = $component->get('mountedActions.0.data.idempotency_key');
-    $component->setTableActionData(['amount' => '', 'payment_date' => '2026-09-14', 'payment_method' => 'cash'])
-        ->callMountedTableAction()->assertHasTableActionErrors(['amount']);
-    expect($component->get('mountedActions.0.data.idempotency_key'))->toBe($key);
+    ['sale' => $sale, 'user' => $user, 'cashAccount' => $cashAccount] = paymentInvoice();
 
-    $component->setTableActionData(['amount' => '40.00'])->callMountedTableAction()->assertHasNoTableActionErrors();
-    $replay = paymentRequest($sale, $user, ['idempotencyKey' => $key]);
+    $this->actingAs($user);
+
+    $component = Livewire::test(ListSales::class)
+        ->mountTableAction('catatPembayaran', $sale);
+
+    $key = $component->get('mountedActions.0.data.idempotency_key');
+
+    $component
+        ->setTableActionData([
+            'amount' => '',
+            'payment_date' => '2026-09-14',
+            'payment_method' => 'cash',
+            'cash_account_id' => $cashAccount->id,
+        ])
+        ->callMountedTableAction()
+        ->assertHasTableActionErrors(['amount']);
+
+    expect(
+        $component->get('mountedActions.0.data.idempotency_key')
+    )->toBe($key);
+
+    $component
+        ->setTableActionData([
+            'amount' => '40.00',
+            'payment_date' => '2026-09-14',
+            'payment_method' => 'cash',
+            'cash_account_id' => $cashAccount->id,
+        ])
+        ->callMountedTableAction()
+        ->assertHasNoTableActionErrors();
+
+    $replay = paymentRequest(
+        $sale,
+        $user,
+        ['idempotencyKey' => $key]
+    );
 
     expect($replay->idempotency_key)->toBe($key);
-    expect(SalePayment::where('sale_id', $sale->id)->count())->toBe(1);
+    expect(
+        SalePayment::where('sale_id', $sale->id)->count()
+    )->toBe(1);
 });
 
 test('penjualan yang belum dibukukan atau dibatalkan tidak menerima pembayaran', function (string $status): void {
@@ -221,3 +283,47 @@ test('riwayat nominal atau status pembayaran tidak valid tidak diabaikan', funct
 
     expect(SalePayment::where('sale_id', $sale->id)->count())->toBe(1);
 })->with([[['amount' => '0.00']], [['status' => 'invalid']]]);
+
+test('pembayaran dan pembatalan menghasilkan reversal kas yang seimbang', function (): void {
+    ['sale' => $sale, 'user' => $user, 'cashAccount' => $cashAccount] = paymentInvoice();
+
+    $payment = app(SalePaymentService::class)->recordPayment(
+        sale: $sale,
+        amount: '100.00',
+        paymentDate: '2026-09-14',
+        paymentMethod: 'cash',
+        referenceNumber: null,
+        notes: null,
+        userId: $user->id,
+        idempotencyKey: (string) Str::uuid(),
+        cashAccountId: $cashAccount->id
+    );
+
+    $incoming = CashMutation::query()
+        ->where('reference_type', 'sale_payment')
+        ->where('reference_id', $payment->id)
+        ->sole();
+
+    expect($incoming->mutation_type)->toBe(CashMutation::TYPE_IN);
+    expect($incoming->amount)->toBe('100.00');
+
+    app(SalePaymentService::class)->cancelPayment(
+        payment: $payment,
+        reason: 'Salah input pembayaran',
+        userId: $user->id,
+        confirmedCorrection: true
+    );
+
+    $outgoing = CashMutation::query()
+        ->where('reference_type', 'sale_payment_cancellation')
+        ->where('reference_id', $payment->id)
+        ->sole();
+
+    expect($outgoing->mutation_type)->toBe(CashMutation::TYPE_OUT);
+    expect($outgoing->amount)->toBe('100.00');
+
+    $balance = app(CashMutationService::class)
+        ->balance($cashAccount);
+
+    expect($balance)->toBe('0.00');
+});

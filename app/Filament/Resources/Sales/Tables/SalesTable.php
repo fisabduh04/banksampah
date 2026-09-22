@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Sales\Tables;
 
 use App\Filament\Resources\Sales\SaleResource;
 use App\Filament\TransactionFailureNotification;
+use App\Models\CashAccount;
 use App\Models\Sale;
 use App\Services\SalePaymentService;
 use App\Services\SalePostingService;
@@ -352,6 +353,27 @@ class SalesTable
                                 'other' => 'Lainnya',
                             ])
                             ->required(),
+                        Select::make('cash_account_id')
+                            ->label('Akun Kas/Bank')
+                            ->options(
+                                fn (): array => CashAccount::query()
+                                    ->where('is_active', true)
+                                    ->orderBy('code')
+                                    ->get()
+                                    ->mapWithKeys(
+                                        fn (CashAccount $account): array => [
+                                            $account->id => $account->code.' — '.$account->name,
+                                        ]
+                                    )
+                                    ->all()
+                            )
+                            ->searchable()
+                            ->preload()
+                            ->required()
+                            ->validationMessages([
+                                'required' => 'Pilih akun Kas/Bank tempat uang diterima.',
+                            ])
+                            ->helperText('Pilih akun tempat pembayaran pengepul benar-benar diterima.'),
 
                         TextInput::make('reference_number')
                             ->label('Nomor Referensi')
@@ -393,7 +415,8 @@ class SalesTable
                                         referenceNumber: $data['reference_number'] ?? null,
                                         notes: $data['notes'] ?? null,
                                         userId: (int) $userId,
-                                        idempotencyKey: $data['idempotency_key']
+                                        idempotencyKey: $data['idempotency_key'],
+                                        cashAccountId: (int) $data['cash_account_id']
                                     );
 
                                 Notification::make()
