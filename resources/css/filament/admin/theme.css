@@ -2,3 +2,96 @@
 
 @source '../../../../app/Filament/**/*';
 @source '../../../../resources/views/filament/**/*';
+
+/* Penanda ini hanya dirender oleh hook halaman login. */
+body:has(.bank-sampah-login) {
+    @apply bg-slate-50 dark:bg-slate-950;
+
+    .fi-simple-layout {
+        @apply bg-linear-to-b from-blue-50/70 to-slate-50 p-4 dark:from-slate-900 dark:to-slate-950;
+    }
+
+    .fi-simple-main-ctn {
+        align-items: safe center;
+    }
+
+    .fi-simple-main {
+        @apply my-0 w-full max-w-md rounded-2xl bg-white p-5 ring-1 ring-slate-200 sm:p-6 dark:bg-slate-900 dark:ring-slate-800;
+
+        box-shadow: 0 12px 40px rgb(15 23 42 / 6%);
+    }
+
+    .institutional-logo-header {
+        @apply mb-3 px-0;
+    }
+
+    .institutional-logo-poltera {
+        @apply h-10;
+    }
+
+    .institutional-logo-dikti {
+        @apply w-32;
+    }
+
+    .fi-simple-page-content {
+        @apply gap-y-2;
+    }
+
+    .fi-simple-header {
+        @apply items-start text-left;
+    }
+
+    .fi-simple-header > .fi-logo {
+        /* Tinggi merek bawaan Filament ditetapkan melalui gaya inline. */
+        height: auto !important;
+
+        @apply mb-2 max-w-full;
+    }
+
+    .bank-sampah-brand {
+        @apply text-base leading-6 font-semibold tracking-normal text-blue-900 dark:text-blue-200;
+
+        overflow-wrap: anywhere;
+    }
+
+    .fi-simple-header-heading {
+        @apply text-left text-2xl leading-tight font-bold text-slate-950 dark:text-white;
+    }
+
+    .bank-sampah-login-description {
+        @apply text-left text-sm leading-5 text-slate-600 dark:text-slate-300;
+    }
+
+    .fi-sc.fi-sc-has-gap,
+    .fi-sc-form {
+        @apply gap-4;
+    }
+
+    .fi-fo-field {
+        @apply gap-y-1.5;
+    }
+
+    .fi-input-wrp {
+        @apply shadow-none;
+    }
+
+    .fi-input-wrp:not(.fi-invalid) {
+        @apply ring-slate-300 dark:ring-slate-600;
+    }
+
+    .fi-input-wrp:not(.fi-invalid):not(.fi-disabled):focus-within {
+        @apply ring-2 ring-blue-600 dark:ring-blue-400;
+    }
+
+    label:has(.fi-checkbox-input) {
+        @apply min-h-11 cursor-pointer items-center gap-2 py-2;
+    }
+
+    .fi-checkbox-input {
+        @apply mt-0 size-4;
+    }
+
+    .bank-sampah-login-footer {
+        @apply border-t border-slate-200 pt-3 text-left text-xs leading-5 text-slate-500 dark:border-slate-700 dark:text-slate-400;
+    }
+}
