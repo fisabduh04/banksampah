@@ -2,11 +2,11 @@
 
 namespace App\Providers\Filament;
 
+use Filament\Auth\Pages\Login;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
-use Filament\Pages\Dashboard;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
@@ -36,8 +36,19 @@ class AdminPanelProvider extends PanelProvider
                 fn (): View => view('filament.institutional-logo'),
             )
             ->renderHook(
-                PanelsRenderHook::SIMPLE_PAGE_END,
-                fn (): View => view('filament.institutional-logo'),
+                PanelsRenderHook::SIMPLE_PAGE_START,
+                fn (): View => view('filament.institutional-logo', ['isHeader' => true]),
+                scopes: Login::class,
+            )
+            ->renderHook(
+                PanelsRenderHook::AUTH_LOGIN_FORM_BEFORE,
+                fn (): View => view('filament.login-description'),
+                scopes: Login::class,
+            )
+            ->renderHook(
+                PanelsRenderHook::AUTH_LOGIN_FORM_AFTER,
+                fn (): View => view('filament.login-footer'),
+                scopes: Login::class,
             )
             ->viteTheme('resources/css/filament/admin/theme.css')
             ->login()
@@ -53,9 +64,6 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\Filament\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\Filament\Pages')
-            ->pages([
-                Dashboard::class,
-            ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
             ->widgets([
                 AccountWidget::class,
