@@ -1,11 +1,13 @@
 <?php
 
+use App\Models\CashAccount;
 use App\Models\Collector;
 use App\Models\Sale;
 use App\Models\SalePayment;
 use App\Models\User;
 use App\Services\SalePaymentService;
 use Brick\Math\BigDecimal;
+use Database\Seeders\AccountSeeder;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -129,15 +131,22 @@ test('MySQL melindungi pembayaran yang diproses bersamaan', function (string $sc
             throw new RuntimeException('Koneksi database pengujian tidak sesuai.');
         }
         Artisan::call('migrate', ['--database' => 'payment_race', '--force' => true, '--no-interaction' => true]);
+        app(AccountSeeder::class)->run();
+        $cashAccount = CashAccount::create([
+            'code' => 'KAS-RACE',
+            'name' => 'Kas Uji Concurrency',
+            'account_type' => CashAccount::TYPE_CASH,
+            'is_active' => true,
+        ]);
         $user = User::factory()->create();
         $collector = Collector::create(['code' => 'RACE', 'name' => 'Pengepul Uji', 'is_active' => true]);
         $sale = Sale::create(['sale_number' => 'RACE', 'collector_id' => $collector->id,
             'transaction_date' => now()->toDateString(), 'status' => 'posted', 'total_amount' => '100.00']);
-        $operation = fn (string $amount, string $key): string => '$payment = app(App\\Services\\SalePaymentService::class)->recordPayment(App\\Models\\Sale::findOrFail('.$sale->id.'), '.var_export($amount, true).', '.var_export(now()->toDateString(), true).', "cash", null, null, '.$user->id.', '.var_export($key, true).'); $resultId = $payment->id;';
+        $operation = fn (string $amount, string $key): string => '$payment = app(App\\Services\\SalePaymentService::class)->recordPayment(App\\Models\\Sale::findOrFail('.$sale->id.'), '.var_export($amount, true).', '.var_export(now()->toDateString(), true).', "cash", null, null, '.$user->id.', '.var_export($key, true).', '.$cashAccount->id.'); $resultId = $payment->id;';
         $key = (string) Str::uuid();
         $operations = [$operation('80.00', $key)];
         if ($scenario === 'cancel_and_pay') {
-            $oldPayment = app(SalePaymentService::class)->recordPayment($sale, '80.00', now()->toDateString(), 'cash', null, null, $user->id, (string) Str::uuid());
+            $oldPayment = app(SalePaymentService::class)->recordPayment($sale, '80.00', now()->toDateString(), 'cash', null, null, $user->id, (string) Str::uuid(), $cashAccount->id);
             $operations[] = 'app(App\\Services\\SalePaymentService::class)->cancelPayment(App\\Models\\SalePayment::findOrFail('.$oldPayment->id.'), "Koreksi pengujian", '.$user->id.', true);';
         } else {
             $operations[] = $operation($scenario === 'conflicting_payload' ? '60.00' : '80.00', $scenario === 'different_requests' ? (string) Str::uuid() : $key);

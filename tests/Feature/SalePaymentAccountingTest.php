@@ -63,6 +63,43 @@ afterEach(function (): void {
     }
 });
 
+test('pembayaran baru tanpa akun kas ditolak tanpa mengubah pencatatan keuangan', function (array $cashAccountArguments): void {
+    $user = User::factory()->create();
+    $collector = Collector::create([
+        'code' => 'P-TANPA-KAS', 'name' => 'Pengepul Uji Tanpa Kas', 'is_active' => true,
+    ]);
+    $sale = Sale::create([
+        'sale_number' => 'PJ-TANPA-KAS', 'collector_id' => $collector->id,
+        'transaction_date' => now()->toDateString(), 'status' => Sale::STATUS_POSTED,
+        'total_amount' => '100.00', 'payment_status' => 'unpaid',
+    ]);
+    $paymentCount = SalePayment::count();
+    $mutationCount = CashMutation::count();
+    $journalCount = JournalEntry::count();
+    $saleBefore = $sale->fresh()->getAttributes();
+
+    expect(fn () => app(SalePaymentService::class)->recordPayment(...[
+        'sale' => $sale,
+        'amount' => '100.00',
+        'paymentDate' => now()->toDateString(),
+        'paymentMethod' => 'cash',
+        'referenceNumber' => null,
+        'notes' => null,
+        'userId' => $user->id,
+        'idempotencyKey' => (string) Str::uuid(),
+        ...$cashAccountArguments,
+    ]))->toThrow(RuntimeException::class, 'Akun Kas/Bank tujuan wajib diisi untuk pembayaran baru.');
+
+    $this->assertDatabaseCount('sale_payments', $paymentCount);
+    $this->assertDatabaseCount('cash_mutations', $mutationCount);
+    $this->assertDatabaseCount('journal_entries', $journalCount);
+    expect($sale->fresh()->getAttributes())->toBe($saleBefore);
+    expect($sale->fresh())->payment_status->toBe('unpaid')->outstanding_amount->toBe('100.00');
+})->with([
+    'akun tidak dikirim' => [[]],
+    'akun null eksplisit' => [['cashAccountId' => null]],
+]);
+
 test(
     'pembayaran pengepul dan pembatalannya menjaga kas piutang dan jurnal tetap konsisten',
     function (): void {

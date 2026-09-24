@@ -161,6 +161,12 @@ class SalePaymentService
                 return $existing;
             }
 
+            if ($cashAccountId === null) {
+                throw new RuntimeException(
+                    'Akun Kas/Bank tujuan wajib diisi untuk pembayaran baru.'
+                );
+            }
+
             if ($paymentDate < $lockedSale->transaction_date->toDateString()) {
                 throw new RuntimeException(
                     'Tanggal pembayaran tidak boleh mendahului tanggal penjualan. Uang muka harus dicatat melalui proses terpisah.'

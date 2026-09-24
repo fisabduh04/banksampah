@@ -9,6 +9,7 @@ use App\Models\SalePayment;
 use App\Models\User;
 use App\Services\CashMutationService;
 use App\Services\SalePaymentService;
+use Database\Seeders\AccountSeeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
@@ -41,6 +42,7 @@ afterEach(function (): void {
 function paymentInvoice(string $total = '100.00'): array
 {
     test()->travelTo(now()->setDate(2026, 9, 14)->setTime(10, 0));
+    app(AccountSeeder::class)->run();
     $user = User::factory()->create();
     $collector = Collector::create(['code' => 'P-'.Str::ulid(), 'name' => 'Pengepul Pengujian', 'is_active' => true]);
     $sale = Sale::create(['sale_number' => 'PJ-'.Str::ulid(), 'collector_id' => $collector->id,
@@ -64,6 +66,7 @@ function paymentRequest(Sale $sale, User $user, array $overrides = []): SalePaym
     return app(SalePaymentService::class)->recordPayment(...[
         'sale' => $sale, 'amount' => '40.00', 'paymentDate' => '2026-09-14', 'paymentMethod' => 'cash',
         'referenceNumber' => null, 'notes' => null, 'userId' => $user->id, 'idempotencyKey' => (string) Str::uuid(),
+        'cashAccountId' => CashAccount::where('code', 'KAS-TEST')->sole()->id,
         ...$overrides,
     ]);
 }
@@ -160,6 +163,39 @@ test('pembayaran lama tanpa pengenal tetap dihitung tanpa ditulis ulang', functi
 
     expect($sale->fresh())->payment_status->toBe('paid')->paid_amount->toBe('100.00');
     expect($old->fresh()->getAttributes())->toBe($before);
+});
+
+test('replay dan pembatalan pembayaran historis tanpa akun kas tetap kompatibel', function (): void {
+    ['sale' => $sale, 'user' => $user] = paymentInvoice();
+    $key = (string) Str::uuid();
+    $payment = SalePayment::create([
+        'payment_number' => 'BYR-HISTORIS', 'idempotency_key' => $key,
+        'sale_id' => $sale->id, 'payment_date' => '2026-09-14', 'amount' => '100.00',
+        'payment_method' => 'cash', 'cash_account_id' => null,
+        'reference_number' => null, 'notes' => null,
+        'status' => SalePayment::STATUS_POSTED, 'received_by' => $user->id,
+    ]);
+    $sale->update(['payment_status' => 'paid']);
+    $paymentBefore = $payment->fresh()->getAttributes();
+    $mutationCount = CashMutation::count();
+    $journalCount = DB::table('journal_entries')->count();
+
+    $replay = paymentRequest($sale, $user, [
+        'amount' => '100.00', 'idempotencyKey' => $key, 'cashAccountId' => null,
+    ]);
+
+    expect($replay->getAttributes())->toBe($paymentBefore);
+    expect(SalePayment::where('sale_id', $sale->id)->count())->toBe(1);
+    expect($sale->fresh())->payment_status->toBe('paid')->outstanding_amount->toBe('0.00');
+    $this->assertDatabaseCount('cash_mutations', $mutationCount);
+    $this->assertDatabaseCount('journal_entries', $journalCount);
+
+    app(SalePaymentService::class)->cancelPayment($replay, 'Koreksi pembayaran historis', $user->id, true);
+
+    expect($payment->fresh())->status->toBe(SalePayment::STATUS_CANCELLED)->cash_account_id->toBeNull();
+    expect($sale->fresh())->payment_status->toBe('unpaid')->outstanding_amount->toBe('100.00');
+    $this->assertDatabaseCount('cash_mutations', $mutationCount);
+    $this->assertDatabaseCount('journal_entries', $journalCount);
 });
 
 test('nominal besar mempertahankan sisa piutang satu sen', function (): void {
