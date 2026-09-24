@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\Account;
 use App\Models\CashAccount;
 use App\Models\CashMutation;
+use App\Models\JournalEntry;
 use App\Models\Sale;
 use App\Models\SalePayment;
 use App\Models\User;
@@ -159,6 +161,12 @@ class SalePaymentService
                 return $existing;
             }
 
+            if ($cashAccountId === null) {
+                throw new RuntimeException(
+                    'Akun Kas/Bank tujuan wajib diisi untuk pembayaran baru.'
+                );
+            }
+
             if ($paymentDate < $lockedSale->transaction_date->toDateString()) {
                 throw new RuntimeException(
                     'Tanggal pembayaran tidak boleh mendahului tanggal penjualan. Uang muka harus dicatat melalui proses terpisah.'
@@ -230,6 +238,11 @@ class SalePaymentService
             ]);
 
             if ($cashAccount !== null) {
+                /**
+                 * =========================================================
+                 * MUTASI KAS/BANK
+                 * =========================================================
+                 */
                 app(CashMutationService::class)->record(
                     cashAccountId: $cashAccount->id,
                     transactionDate: $paymentDate,
@@ -240,6 +253,56 @@ class SalePaymentService
                     referenceNumber: $payment->payment_number,
                     description: 'Pembayaran penjualan '.$lockedSale->sale_number,
                     userId: $userId
+                );
+
+                /**
+                 * =========================================================
+                 * JURNAL OTOMATIS PEMBAYARAN PENGEPUL
+                 * =========================================================
+                 *
+                 * Debit  Kas / Bank
+                 * Kredit Piutang Pengepul
+                 */
+                $cashSystemKey = match ($cashAccount->account_type) {
+                    CashAccount::TYPE_CASH => 'cash',
+                    CashAccount::TYPE_BANK => 'bank',
+
+                    default => throw new RuntimeException(
+                        'Jenis akun Kas/Bank pembayaran tidak valid.'
+                    ),
+                };
+
+                $cashLedgerAccount = Account::query()
+                    ->where('system_key', $cashSystemKey)
+                    ->firstOrFail();
+
+                $receivableAccount = Account::query()
+                    ->where('system_key', 'collector_receivable')
+                    ->firstOrFail();
+
+                app(JournalService::class)->post(
+                    transactionDate: $paymentDate,
+                    referenceType: 'sale_payment',
+                    referenceId: (int) $payment->id,
+                    referenceNumber: $payment->payment_number,
+                    description: 'Pembayaran penjualan '
+                        .$lockedSale->sale_number,
+                    userId: $userId,
+                    lines: [
+                        [
+                            'account_id' => $cashLedgerAccount->id,
+                            'debit' => $amount,
+                            'credit' => '0.00',
+                            'description' => 'Penerimaan '
+                                .$cashAccount->name,
+                        ],
+                        [
+                            'account_id' => $receivableAccount->id,
+                            'debit' => '0.00',
+                            'credit' => $amount,
+                            'description' => 'Pelunasan piutang pengepul',
+                        ],
+                    ]
                 );
             }
 
@@ -284,6 +347,33 @@ class SalePaymentService
                         payment: $lockedPayment,
                         userId: $userId
                     );
+            }
+            /**
+             * =========================================================
+             * REVERSAL JURNAL PEMBAYARAN
+             * =========================================================
+             */
+            $originalJournal = JournalEntry::query()
+                ->where('reference_type', 'sale_payment')
+                ->where('reference_id', $lockedPayment->id)
+                ->lockForUpdate()
+                ->first();
+
+            /**
+             * Pembayaran historis sebelum Fase 8 mungkin
+             * belum mempunyai jurnal.
+             */
+            if ($originalJournal !== null) {
+                app(JournalService::class)->reverse(
+                    journalEntry: $originalJournal,
+                    transactionDate: now()->toDateString(),
+                    referenceType: 'sale_payment_cancellation',
+                    referenceId: (int) $lockedPayment->id,
+                    referenceNumber: 'REV-'.$lockedPayment->payment_number,
+                    description: 'Pembatalan pembayaran '
+                        .$lockedPayment->payment_number,
+                    userId: $userId
+                );
             }
             $lockedPayment->update([
                 'status' => SalePayment::STATUS_CANCELLED, 'cancelled_at' => now(),

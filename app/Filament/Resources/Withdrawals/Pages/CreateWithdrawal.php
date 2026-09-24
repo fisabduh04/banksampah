@@ -113,7 +113,10 @@ class CreateWithdrawal extends CreateRecord
              * 3. membuat Mutasi Saldo Pengeluaran,
              * 4. mengurangi saldo nasabah.
              */
-            app(WithdrawalService::class)->post($this->record);
+            app(WithdrawalService::class)->post(
+                withdrawal: $this->record,
+                userId: auth()->id()
+            );
 
             Notification::make()
                 ->title('Penarikan Berhasil Dibukukan')

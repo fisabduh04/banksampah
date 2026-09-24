@@ -3,6 +3,7 @@
 use App\Filament\Resources\Sales\Pages\ListSales;
 use App\Filament\Resources\Sales\Pages\ViewSale;
 use App\Filament\Resources\Sales\RelationManagers\PaymentsRelationManager;
+use App\Models\CashAccount;
 use App\Models\Collector;
 use App\Models\InventoryMovement;
 use App\Models\Sale;
@@ -73,7 +74,13 @@ test('penjualan tanpa pembayaran dapat dibatalkan dengan membalik stok dan biaya
 test('penjualan dengan pembayaran aktif ditolak pembatalannya tanpa mengubah data', function (): void {
     $this->travelTo(now()->setDate(2026, 9, 14)->setTime(10, 0));
     ['sale' => $sale, 'user' => $user, 'source' => $source] = postedSaleForCancellation();
-    $payment = app(SalePaymentService::class)->recordPayment($sale, '50.00', '2026-09-14', 'cash', null, null, $user->id, (string) Str::uuid());
+    $cashAccount = CashAccount::create([
+        'code' => 'KAS-'.Str::ulid(),
+        'name' => 'Kas Pengujian Pembatalan',
+        'account_type' => CashAccount::TYPE_CASH,
+        'is_active' => true,
+    ]);
+    $payment = app(SalePaymentService::class)->recordPayment($sale, '50.00', '2026-09-14', 'cash', null, null, $user->id, (string) Str::uuid(), $cashAccount->id);
     $saleBefore = $sale->fresh()->getAttributes();
     $paymentBefore = $payment->fresh()->getAttributes();
     $stockBefore = InventoryMovement::where('waste_type_id', $source->waste_type_id)->orderBy('id')->get()->toArray();
@@ -89,7 +96,13 @@ test('penjualan dengan pembayaran aktif ditolak pembatalannya tanpa mengubah dat
 test('koreksi penjualan dan pembayaran menolak permintaan tanpa konfirmasi atau alasan', function (string $kind, string $reason, bool $confirmed): void {
     $this->travelTo(now()->setDate(2026, 9, 14)->setTime(10, 0));
     ['sale' => $sale, 'user' => $user, 'source' => $source] = postedSaleForCancellation();
-    $payment = $kind === 'payment' ? app(SalePaymentService::class)->recordPayment($sale, '50.00', '2026-09-14', 'cash', null, null, $user->id, (string) Str::uuid()) : null;
+    $cashAccount = $kind === 'payment' ? CashAccount::create([
+        'code' => 'KAS-'.Str::ulid(),
+        'name' => 'Kas Pengujian Pembatalan',
+        'account_type' => CashAccount::TYPE_CASH,
+        'is_active' => true,
+    ]) : null;
+    $payment = $kind === 'payment' ? app(SalePaymentService::class)->recordPayment($sale, '50.00', '2026-09-14', 'cash', null, null, $user->id, (string) Str::uuid(), $cashAccount->id) : null;
     $before = $sale->fresh()->getAttributes();
     $stock = InventoryMovement::where('waste_type_id', $source->waste_type_id)->orderBy('id')->get()->toArray();
 
@@ -124,7 +137,13 @@ test('dialog koreksi penjualan mencatat alasan dan mempertahankan mutasi asal', 
 test('dialog koreksi pembayaran mencatat audit dan tidak menggandakan pembatalan', function (): void {
     $this->travelTo(now()->setDate(2026, 9, 14)->setTime(10, 0));
     ['sale' => $sale, 'user' => $user] = postedSaleForCancellation();
-    $payment = app(SalePaymentService::class)->recordPayment($sale, '50.00', '2026-09-14', 'cash', null, null, $user->id, (string) Str::uuid());
+    $cashAccount = CashAccount::create([
+        'code' => 'KAS-'.Str::ulid(),
+        'name' => 'Kas Pengujian Pembatalan',
+        'account_type' => CashAccount::TYPE_CASH,
+        'is_active' => true,
+    ]);
+    $payment = app(SalePaymentService::class)->recordPayment($sale, '50.00', '2026-09-14', 'cash', null, null, $user->id, (string) Str::uuid(), $cashAccount->id);
     $this->actingAs($user);
 
     Livewire::test(PaymentsRelationManager::class, [
@@ -142,7 +161,13 @@ test('dialog koreksi pembayaran mencatat audit dan tidak menggandakan pembatalan
 test('pembayaran lama yang sudah diverifikasi tidak boleh dikoreksi sebagai salah input', function (): void {
     $this->travelTo(now()->setDate(2026, 9, 14)->setTime(10, 0));
     ['sale' => $sale, 'user' => $user] = postedSaleForCancellation();
-    $payment = app(SalePaymentService::class)->recordPayment($sale, '50.00', '2026-09-14', 'cash', null, null, $user->id, (string) Str::uuid());
+    $cashAccount = CashAccount::create([
+        'code' => 'KAS-'.Str::ulid(),
+        'name' => 'Kas Pengujian Pembatalan',
+        'account_type' => CashAccount::TYPE_CASH,
+        'is_active' => true,
+    ]);
+    $payment = app(SalePaymentService::class)->recordPayment($sale, '50.00', '2026-09-14', 'cash', null, null, $user->id, (string) Str::uuid(), $cashAccount->id);
     $payment->forceFill(['verified_at' => now(), 'verified_by' => $user->id])->save();
     $before = $payment->fresh()->getAttributes();
 

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Withdrawals\Schemas;
 
+use App\Models\CashAccount;
 use App\Models\Customer;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
@@ -49,6 +50,32 @@ class WithdrawalForm
                     ->disabled()
                     ->dehydrated(false)
                     ->default(0),
+
+                Select::make('cash_account_id')
+                    ->label('Sumber Kas/Bank')
+                    ->options(
+                        fn (): array => CashAccount::query()
+                            ->where('is_active', true)
+                            ->orderBy('code')
+                            ->get()
+                            ->mapWithKeys(
+                                fn (CashAccount $account): array => [
+                                    $account->id => $account->code.' — '.$account->name,
+                                ]
+                            )
+                            ->all()
+                    )
+                    ->searchable()
+                    ->preload()
+                    ->required(
+                        fn (Get $get): bool => $get('status') === 'posted'
+                    )
+                    ->validationMessages([
+                        'required' => 'Pilih Kas/Bank sumber pembayaran penarikan.',
+                    ])
+                    ->helperText(
+                        'Pilih akun tempat uang benar-benar dikeluarkan untuk membayar nasabah.'
+                    ),
 
                 DatePicker::make('transaction_date')
                     ->validationMessages([
@@ -108,6 +135,7 @@ class WithdrawalForm
                         'posted' => 'Telah Dibukukan',
                     ])
                     ->default('draft')
+                    ->live()
                     ->required(),
 
                 Textarea::make('notes')
