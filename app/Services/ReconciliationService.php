@@ -14,6 +14,66 @@ use RuntimeException;
 class ReconciliationService
 {
     /**
+     * Bandingkan nilai mutasi persediaan dengan akun kontrol GL pada tanggal laporan.
+     * Biaya nol pada histori dan kuantitas nol pada koreksi biaya tetap sah.
+     * Gunakan total_cost tersimpan, bukan quantity dikalikan unit_cost yang dibulatkan.
+     *
+     * @return array{
+     *     as_of_date: string, account_id: int, account_code: string,
+     *     gl_balance: string, inventory_balance: string, difference: string, balanced: bool
+     * }
+     */
+    public function inventoryAsOf(string $asOfDate): array
+    {
+        if (Validator::make(
+            ['date' => $asOfDate],
+            ['date' => ['required', 'date_format:Y-m-d']]
+        )->fails()) {
+            throw new InvalidArgumentException('Tanggal laporan tidak valid.');
+        }
+
+        $account = Account::query()->where('system_key', 'inventory')->sole();
+        $report = app(FinancialReportingService::class)->trialBalance($asOfDate, $asOfDate);
+        $row = $report['rows']->get($account->id);
+        $glBalance = BigDecimal::of($row['closing_debit'] ?? '0.00')
+            ->minus($row['closing_credit'] ?? '0.00');
+        $inventoryBalance = BigDecimal::of('0.00');
+
+        $movements = DB::table('inventory_movements')
+            ->select('movement_type', 'quantity', 'unit_cost', 'total_cost')
+            ->where('transaction_date', '<=', $asOfDate)
+            ->orderBy('id')
+            ->cursor();
+
+        foreach ($movements as $movement) {
+            if (
+                ! in_array($movement->movement_type, ['in', 'out'], true)
+                || ! preg_match('/^[0-9]{1,9}(\.[0-9]{1,3})?$/D', (string) $movement->quantity)
+                || ! preg_match('/^[0-9]{1,13}(\.[0-9]{1,2})?$/D', (string) $movement->unit_cost)
+                || ! preg_match('/^[0-9]{1,13}(\.[0-9]{1,2})?$/D', (string) $movement->total_cost)
+            ) {
+                throw new RuntimeException('Terdapat mutasi persediaan dengan jenis, kuantitas, atau biaya tidak valid.');
+            }
+
+            $inventoryBalance = $movement->movement_type === 'in'
+                ? $inventoryBalance->plus((string) $movement->total_cost)
+                : $inventoryBalance->minus((string) $movement->total_cost);
+        }
+
+        $difference = $inventoryBalance->minus($glBalance);
+
+        return [
+            'as_of_date' => $asOfDate,
+            'account_id' => $account->id,
+            'account_code' => $account->code,
+            'gl_balance' => (string) $glBalance->toScale(2),
+            'inventory_balance' => (string) $inventoryBalance->toScale(2),
+            'difference' => (string) $difference->toScale(2),
+            'balanced' => $difference->isZero(),
+        ];
+    }
+
+    /**
      * Bandingkan jumlah rekening fisik per jenis dengan akun kontrol GL.
      * Rincian rekening hanya berisi saldo subledger, bukan rekonsiliasi GL individual.
      *
