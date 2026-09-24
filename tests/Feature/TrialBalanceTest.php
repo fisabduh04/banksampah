@@ -5,7 +5,9 @@ use App\Models\Account;
 use App\Models\User;
 use App\Services\JournalService;
 use Database\Seeders\AccountSeeder;
+use Filament\Facades\Filament;
 use Illuminate\Support\Facades\DB;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 uses(TestCase::class);
@@ -139,6 +141,22 @@ test('reversal lintas periode dihitung pada tanggal jurnal masing-masing', funct
     expect($combined['totals']['period_credit'])->toBe('200.00');
     expect($combined['totals']['closing_debit'])->toBe('0.00');
     expect($combined['totals']['closing_credit'])->toBe('0.00');
+
+    Filament::setCurrentPanel(Filament::getPanel('admin'));
+    Filament::bootCurrentPanel();
+    $this->actingAs($user);
+
+    Livewire::test(TrialBalance::class)
+        ->set('startDate', $dateOriginal)
+        ->set('endDate', $dateOriginal)
+        ->assertSee('Neraca Saldo seimbang.')
+        ->assertSee('Rp 100,00')
+        ->set('endDate', $dateReversal)
+        ->assertSee('Rp 200,00')
+        ->assertSee('Rp 0,00')
+        ->set('endDate', '')
+        ->assertSee('Periode tidak valid.')
+        ->assertDontSee('Neraca Saldo seimbang.');
 });
 
 test('akun historis dan saldo berlawanan tetap tampil pada sisi sebenarnya', function (): void {

@@ -6,7 +6,9 @@ use App\Models\User;
 use App\Services\FinancialReportingService;
 use App\Services\JournalService;
 use Database\Seeders\AccountSeeder;
+use Filament\Facades\Filament;
 use Illuminate\Support\Facades\DB;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 uses(TestCase::class);
@@ -116,6 +118,21 @@ test('Buku Besar tetap membuka akun historis non-postable', function (): void {
     expect($ledger['closing_balance'])->toBe('-0.01');
     expect($ledger['transaction_count'])->toBe(0);
     expect($trialBalance['rows'][$cash->id]['closing_credit'])->toBe('0.01');
+
+    Filament::setCurrentPanel(Filament::getPanel('admin'));
+    Filament::bootCurrentPanel();
+    $this->actingAs($user);
+
+    Livewire::test(GeneralLedger::class)
+        ->set('accountId', $cash->id)
+        ->set('startDate', $reportDate)
+        ->set('endDate', $reportDate)
+        ->assertSee('Nonaktif')
+        ->assertSee('Saldo Akhir')
+        ->assertSee('Rp -0,01')
+        ->set('endDate', '')
+        ->assertSee('Periode Buku Besar tidak valid.')
+        ->assertDontSee('Rp -0,01');
 
     // Tanpa akun postable, halaman memilih akun historis yang masih ada.
     Account::query()->update(['is_postable' => false]);

@@ -3,6 +3,310 @@
 @source '../../../../app/Filament/**/*';
 @source '../../../../resources/views/filament/**/*';
 
+/* Struktur tegas dan kepadatan desktop hanya berlaku pada dashboard. */
+.bank-sampah-dashboard {
+    & .fi-header-heading {
+        @apply text-2xl leading-8 tracking-tight;
+    }
+
+    & .fi-page-content {
+        @apply gap-y-6;
+    }
+
+    & .fi-wi-chart {
+        @apply min-w-0 self-start;
+    }
+
+    & .fi-wi-chart .fi-section-header-description {
+        @apply text-xs leading-5;
+    }
+
+    & .bank-sampah-balance-stat,
+    & .fi-wi-chart .fi-section {
+        @apply rounded-lg border border-gray-200 shadow-none ring-0 dark:border-gray-700;
+    }
+
+    @container (min-width: 56rem) {
+        & .bank-sampah-balance-stat,
+        & .fi-wi-chart .fi-section-header,
+        & .fi-wi-chart .fi-section-content {
+            padding: 1.25rem;
+        }
+    }
+}
+
+.bank-sampah-reconciliation {
+    & .fi-section-header {
+        @apply flex flex-wrap items-start justify-between gap-3;
+    }
+
+    & .fi-section-header-text-ctn {
+        flex: 1 1 12rem;
+    }
+
+    & .fi-section-header-after-ctn {
+        @apply self-start;
+    }
+
+    & .fi-section-header-description {
+        @apply text-xs leading-5;
+    }
+
+    & .fi-section-content {
+        @apply gap-4;
+    }
+
+    & .fi-section-footer > .fi-sc {
+        @apply flex-col items-start gap-1;
+    }
+}
+
+/* Khusus saldo dashboard; tampilan nominal pada halaman laporan tetap mengikuti komponennya. */
+.bank-sampah-balance-stat {
+    min-width: 0;
+
+    & .fi-wi-stats-overview-stat-content {
+        min-width: 0;
+    }
+
+    & .fi-wi-stats-overview-stat-value {
+        font-size: 1.25rem;
+        line-height: 1.35;
+        overflow-x: auto;
+        white-space: nowrap;
+        overflow-wrap: normal;
+    }
+
+    & .fi-wi-stats-overview-stat-value span {
+        white-space: nowrap;
+    }
+
+    & .fi-wi-stats-overview-stat-description {
+        @apply min-w-0 items-start text-xs leading-5;
+
+        & > span {
+            @apply min-w-0;
+        }
+
+        & .tabular-nums {
+            @apply inline-block max-w-full overflow-x-auto align-bottom whitespace-nowrap;
+        }
+    }
+}
+
+.bank-sampah-balance-stat-balanced .fi-wi-stats-overview-stat-description {
+    @apply whitespace-nowrap;
+}
+
+@container (min-width: 52rem) {
+    .bank-sampah-dashboard-widgets > .fi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .bank-sampah-reconciliation .fi-section-content {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .bank-sampah-dashboard .bank-sampah-balance-stat {
+        padding: 1rem;
+    }
+}
+
+/* Lebar isi laporan, bukan viewport, menentukan jumlah kolom. */
+.financial-report {
+    container: financial-report / inline-size;
+    @apply grid min-w-0 gap-6;
+
+    & .fi-section-header {
+        @apply flex-wrap items-start gap-3;
+    }
+
+    & .fi-section-header-text-ctn {
+        flex: 1 1 14rem;
+        min-width: 0;
+    }
+
+    & .fi-section-header-after-ctn {
+        @apply max-w-full self-start;
+    }
+
+    & .fi-section-header-description {
+        @apply text-xs leading-5;
+    }
+
+    & > *,
+    & .fi-section-content,
+    & .fi-section-content-ctn {
+        min-width: 0;
+    }
+
+    & .financial-report-filters {
+        @apply grid min-w-0 gap-4;
+        grid-template-columns: minmax(0, 18rem);
+    }
+
+    & .financial-report-filters > * {
+        min-width: 0;
+    }
+
+    & .financial-report-metrics {
+        @apply grid min-w-0 gap-4;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    & .financial-report-metrics > div {
+        @apply min-w-0 rounded-lg border border-gray-200 bg-gray-50/50 p-4 dark:border-gray-700 dark:bg-white/5;
+    }
+
+    & .financial-report-metrics dt {
+        @apply text-[0.8125rem] leading-5 text-gray-600 dark:text-gray-400;
+    }
+
+    & .financial-report-metrics dd {
+        @apply mt-1 min-w-0 overflow-x-auto text-lg leading-6 font-semibold tabular-nums;
+        white-space: nowrap;
+        overflow-wrap: normal;
+    }
+
+    & .financial-report-metrics dl {
+        @apply mt-3;
+    }
+
+    & .financial-report-metrics h3 {
+        @apply text-sm font-medium;
+    }
+
+    & .financial-report-metrics dl dd,
+    & .financial-report-details dd {
+        @apply text-base leading-6 font-medium;
+    }
+
+    & .financial-report-operations {
+        @apply grid min-w-0 gap-4;
+    }
+
+    & .financial-report-operation {
+        @apply min-w-0 border-b border-gray-200 pb-4 last:border-b-0 last:pb-0 dark:border-gray-700;
+    }
+
+    & .financial-report-operation h3 {
+        @apply text-sm leading-5 font-medium;
+    }
+
+    & .financial-report-operation dl {
+        @apply mt-3 grid min-w-0 gap-x-6 gap-y-3;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    & .financial-report-operation dl > div {
+        min-width: 0;
+    }
+
+    & .financial-report-operation dt {
+        @apply text-[0.8125rem] leading-5 text-gray-500 dark:text-gray-400;
+    }
+
+    & .financial-report-operation dd {
+        @apply mt-1 min-w-0 overflow-x-auto text-base leading-6 font-medium tabular-nums;
+        white-space: nowrap;
+        overflow-wrap: normal;
+    }
+
+    & .financial-report-metrics dd + dt {
+        @apply mt-3;
+    }
+
+    & .financial-report-metrics .financial-report-metric-primary {
+        @apply border-primary-200 bg-primary-50 dark:border-primary-400/30 dark:bg-primary-400/10;
+    }
+
+    & .financial-report-group-heading {
+        @apply mt-5 mb-3 text-sm font-semibold;
+    }
+
+    & .financial-report-status {
+        @apply mb-4 flex min-w-0 flex-wrap items-center gap-3 text-sm;
+    }
+
+    & .financial-report-status > span {
+        @apply max-w-full overflow-x-auto whitespace-nowrap;
+    }
+
+    & .financial-report-status .fi-badge,
+    & .fi-section-header-after-ctn .fi-badge {
+        @apply max-w-full whitespace-normal text-start;
+    }
+
+    & .financial-report-status .fi-badge-label,
+    & .fi-section-header-after-ctn .fi-badge-label {
+        @apply overflow-visible whitespace-normal;
+    }
+
+    & .financial-report-comparison {
+        @apply mt-4 flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 px-4 py-3 text-sm dark:border-gray-700;
+    }
+
+    & .financial-report-comparison > span {
+        @apply min-w-0 max-w-full overflow-x-auto;
+    }
+
+    & .financial-report-comparison .tabular-nums {
+        @apply font-semibold;
+    }
+
+    & .financial-report-comparison-danger {
+        @apply border-danger-200 bg-danger-50 text-danger-700 dark:border-danger-400/30 dark:bg-danger-400/10 dark:text-danger-300;
+    }
+
+    & .financial-report-note {
+        @apply mt-4 text-[0.8125rem] leading-5 text-gray-500 dark:text-gray-400;
+    }
+
+    & .financial-report-warning {
+        @apply text-sm text-danger-700 ring-1 ring-danger-200 dark:text-danger-300 dark:ring-danger-400/30;
+    }
+
+    & .fi-ta {
+        min-width: 0;
+    }
+
+    @container financial-report (min-width: 38rem) {
+        & .financial-report-filters {
+            grid-template-columns: repeat(2, minmax(0, 18rem));
+        }
+
+        & .financial-report-filters-account > :first-child {
+            grid-column: 1 / -1;
+        }
+
+        & .financial-report-metrics-two,
+        & .financial-report-metrics-four {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+
+    @container financial-report (min-width: 52rem) {
+        & .financial-report-filters-account {
+            grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
+        }
+
+        & .financial-report-filters-account > :first-child {
+            grid-column: auto;
+        }
+
+        & .financial-report-metrics-three,
+        & .financial-report-operation dl {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+    }
+
+    @container financial-report (min-width: 76rem) {
+        & .financial-report-metrics-four {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+    }
+}
+
 /* Penanda ini hanya dirender oleh hook halaman login. */
 body:has(.bank-sampah-login) {
     @apply bg-slate-50 dark:bg-slate-950;
