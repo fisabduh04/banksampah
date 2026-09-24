@@ -11,7 +11,7 @@ use Tests\TestCase;
 uses(TestCase::class);
 
 beforeEach(function (): void {
-    // Ikuti pengamanan database yang dipakai test accounting Fase 8.
+    // Ikuti pengamanan database pada test accounting Fase 8.
     if (! app()->environment('testing')) {
         throw new RuntimeException(
             'Pengujian hanya boleh berjalan dalam environment testing.'
@@ -55,8 +55,7 @@ afterEach(function (): void {
 });
 
 test('reversal lintas periode dihitung pada tanggal jurnal masing-masing', function (): void {
-    // Gunakan akhir bulan lalu dan awal bulan ini agar kedua tanggal
-    // selalu berada sebelum atau pada tanggal saat test dijalankan.
+    // Akhir bulan lalu dan awal bulan ini selalu bukan tanggal masa depan.
     $dateOriginal = now()->startOfMonth()->subDay()->toDateString();
     $dateReversal = now()->startOfMonth()->toDateString();
 
@@ -103,7 +102,7 @@ test('reversal lintas periode dihitung pada tanggal jurnal masing-masing', funct
         userId: $user->id
     );
 
-    // Instans baru untuk setiap periode agar cache laporan tidak terbawa.
+    // Gunakan Page baru agar cache tidak terbawa ke periode berikutnya.
     $reportFor = function (string $start, string $end): array {
         $page = new TrialBalance;
         $page->startDate = $start;
@@ -112,7 +111,7 @@ test('reversal lintas periode dihitung pada tanggal jurnal masing-masing', funct
         return $page->getTrialBalanceData();
     };
 
-    // Periksa laporan setelah jurnal pembalik dibuat.
+    // Semua laporan dibaca setelah jurnal pembalik dibuat.
     $previousMonth = $reportFor($dateOriginal, $dateOriginal);
     $currentMonth = $reportFor($dateReversal, $dateReversal);
     $combined = $reportFor($dateOriginal, $dateReversal);
@@ -140,4 +139,63 @@ test('reversal lintas periode dihitung pada tanggal jurnal masing-masing', funct
     expect($combined['totals']['period_credit'])->toBe('200.00');
     expect($combined['totals']['closing_debit'])->toBe('0.00');
     expect($combined['totals']['closing_credit'])->toBe('0.00');
+});
+
+test('akun historis dan saldo berlawanan tetap tampil pada sisi sebenarnya', function (): void {
+    $journalDate = now()->subDay()->toDateString();
+    $reportDate = now()->toDateString();
+
+    $user = User::factory()->create();
+
+    $cash = Account::query()
+        ->where('system_key', 'cash')
+        ->sole();
+
+    $openingBalance = Account::query()
+        ->where('system_key', 'opening_balance')
+        ->sole();
+
+    // Kas normalnya debit, tetapi jurnal ini membuat saldonya kredit.
+    app(JournalService::class)->post(
+        transactionDate: $journalDate,
+        referenceType: 'trial_balance_historical_test',
+        referenceId: $user->id,
+        referenceNumber: 'TB-HISTORICAL',
+        description: 'Uji saldo historis satu sen',
+        userId: $user->id,
+        lines: [
+            [
+                'account_id' => $cash->id,
+                'debit' => '0.00',
+                'credit' => '0.01',
+            ],
+            [
+                'account_id' => $openingBalance->id,
+                'debit' => '0.01',
+                'credit' => '0.00',
+            ],
+        ]
+    );
+
+    // Perubahan master akun tidak boleh menghapus histori jurnal.
+    $cash->update([
+        'is_active' => false,
+        'is_postable' => false,
+    ]);
+
+    $page = new TrialBalance;
+    $page->startDate = $reportDate;
+    $page->endDate = $reportDate;
+
+    $report = $page->getTrialBalanceData();
+
+    expect($report['balanced'])->toBeTrue();
+    expect($report['rows']->has($cash->id))->toBeTrue();
+    expect($report['rows'][$cash->id]['opening_credit'])->toBe('0.01');
+    expect($report['rows'][$cash->id]['closing_credit'])->toBe('0.01');
+    expect($report['rows'][$cash->id]['closing_debit'])->toBe('0.00');
+    expect($report['rows'][$openingBalance->id]['closing_debit'])
+        ->toBe('0.01');
+    expect($report['totals']['period_debit'])->toBe('0.00');
+    expect($report['totals']['period_credit'])->toBe('0.00');
 });
