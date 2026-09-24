@@ -199,3 +199,68 @@ test('akun historis dan saldo berlawanan tetap tampil pada sisi sebenarnya', fun
     expect($report['totals']['period_debit'])->toBe('0.00');
     expect($report['totals']['period_credit'])->toBe('0.00');
 });
+
+test('batas periode memakai tanggal transaksi dan memasukkan tanggal akhir', function (): void {
+    $beforeStart = now()->subDays(2)->toDateString();
+    $startDate = now()->subDay()->toDateString();
+    $endDate = now()->toDateString();
+
+    $user = User::factory()->create();
+
+    $cash = Account::query()
+        ->where('system_key', 'cash')
+        ->sole();
+
+    $openingBalance = Account::query()
+        ->where('system_key', 'opening_balance')
+        ->sole();
+
+    $service = app(JournalService::class);
+    $postedDates = [];
+
+    // Kedua jurnal diposting sekarang, tetapi tanggal transaksinya berbeda.
+    foreach ([
+        [$beforeStart, 'trial_balance_before_start', '100.05'],
+        [$endDate, 'trial_balance_on_end', '200.04'],
+    ] as [$transactionDate, $referenceType, $amount]) {
+        $entry = $service->post(
+            transactionDate: $transactionDate,
+            referenceType: $referenceType,
+            referenceId: $user->id,
+            referenceNumber: null,
+            description: 'Uji batas tanggal Neraca Saldo',
+            userId: $user->id,
+            lines: [
+                [
+                    'account_id' => $cash->id,
+                    'debit' => $amount,
+                    'credit' => '0.00',
+                ],
+                [
+                    'account_id' => $openingBalance->id,
+                    'debit' => '0.00',
+                    'credit' => $amount,
+                ],
+            ]
+        );
+
+        $postedDates[] = $entry->posted_at->toDateString();
+    }
+
+    $page = new TrialBalance;
+    $page->startDate = $startDate;
+    $page->endDate = $endDate;
+
+    $report = $page->getTrialBalanceData();
+
+    // Waktu posting sama; pengelompokan mengikuti tanggal transaksi.
+    expect($postedDates[0])->toBe($postedDates[1]);
+    expect($report['balanced'])->toBeTrue();
+    expect($report['totals']['opening_debit'])->toBe('100.05');
+    expect($report['totals']['opening_credit'])->toBe('100.05');
+    expect($report['totals']['period_debit'])->toBe('200.04');
+    expect($report['totals']['period_credit'])->toBe('200.04');
+    expect($report['totals']['closing_debit'])->toBe('300.09');
+    expect($report['totals']['closing_credit'])->toBe('300.09');
+    expect($report['rows'][$cash->id]['closing_debit'])->toBe('300.09');
+});
