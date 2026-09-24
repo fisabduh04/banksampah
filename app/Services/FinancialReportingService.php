@@ -8,6 +8,7 @@ use Brick\Math\BigDecimal;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use RuntimeException;
 
 class FinancialReportingService
 {
@@ -20,6 +21,124 @@ class FinancialReportingService
         'closing_debit',
         'closing_credit',
     ];
+
+    /**
+     * Laba rugi menggunakan mutasi periode, tanpa membawa saldo awal pendapatan/beban.
+     *
+     * @return array{valid: bool, balanced: bool, start_date: ?string, end_date: ?string,
+     *     rows: Collection, totals: array{revenue: string, expense: string, net_profit: string}}
+     */
+    public function incomeStatement(?string $startDate, ?string $endDate): array
+    {
+        $report = $this->trialBalance($startDate, $endDate);
+        $groups = $this->classifiedBalances($report, 'period');
+        $revenue = $groups[Account::TYPE_REVENUE];
+        $expense = $groups[Account::TYPE_EXPENSE];
+
+        return [
+            'valid' => $report['valid'],
+            'balanced' => $report['balanced'],
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'rows' => $revenue['rows']->union($expense['rows']),
+            'totals' => [
+                'revenue' => $revenue['total'],
+                'expense' => $expense['total'],
+                'net_profit' => (string) BigDecimal::of($revenue['total'])
+                    ->minus($expense['total'])->toScale(2),
+            ],
+        ];
+    }
+
+    /**
+     * Saldo kumulatif sampai tanggal laporan, termasuk seluruh saldo awal.
+     * Laba belum ditutup adalah saldo pendapatan dikurangi beban yang masih tersisa;
+     * pemindahan laba ke ekuitas melalui jurnal tidak boleh dihitung dua kali.
+     *
+     * @return array{valid: bool, as_of_date: ?string, rows: Collection,
+     *     totals: array{assets: string, liabilities: string, equity: string,
+     *         unclosed_earnings: string, equity_including_earnings: string, liabilities_and_equity: string},
+     *     difference: string, balanced: bool}
+     */
+    public function balanceSheet(?string $asOfDate): array
+    {
+        $report = $this->trialBalance($asOfDate, $asOfDate);
+        $groups = $this->classifiedBalances($report, 'closing');
+        $assets = $groups[Account::TYPE_ASSET];
+        $liabilities = $groups[Account::TYPE_LIABILITY];
+        $equity = $groups[Account::TYPE_EQUITY];
+        $earnings = BigDecimal::of($groups[Account::TYPE_REVENUE]['total'])
+            ->minus($groups[Account::TYPE_EXPENSE]['total']);
+        $totalEquity = BigDecimal::of($equity['total'])->plus($earnings);
+        $liabilitiesAndEquity = $totalEquity->plus($liabilities['total']);
+        $difference = BigDecimal::of($assets['total'])->minus($liabilitiesAndEquity);
+
+        return [
+            'valid' => $report['valid'],
+            'as_of_date' => $asOfDate,
+            'rows' => $assets['rows']->union($liabilities['rows'])->union($equity['rows']),
+            'totals' => [
+                'assets' => $assets['total'],
+                'liabilities' => $liabilities['total'],
+                'equity' => $equity['total'],
+                'unclosed_earnings' => (string) $earnings->toScale(2),
+                'equity_including_earnings' => (string) $totalEquity->toScale(2),
+                'liabilities_and_equity' => (string) $liabilitiesAndEquity->toScale(2),
+            ],
+            'difference' => (string) $difference->toScale(2),
+            'balanced' => $report['valid'] && $difference->isZero(),
+        ];
+    }
+
+    /**
+     * Klasifikasi berasal dari master akun. Saldo kontra tetap mengurangi kelompoknya.
+     * Akun postable tanpa transaksi tampil nol; akun induk tidak dijumlahkan ulang.
+     *
+     * @param  array{valid: bool, rows: Collection}  $report
+     * @return array<string, array{rows: Collection, total: string}>
+     */
+    private function classifiedBalances(array $report, string $balanceType): array
+    {
+        $groups = [];
+        foreach (Account::accountTypes() as $type => $label) {
+            $groups[$type] = ['rows' => collect(), 'total' => BigDecimal::of('0.00')];
+        }
+
+        if ($report['valid']) {
+            foreach (Account::query()->orderBy('code')->get() as $account) {
+                if (! $account->is_postable && ! $report['rows']->has($account->id)) {
+                    continue;
+                }
+
+                if (! array_key_exists($account->account_type, $groups)) {
+                    throw new RuntimeException('Klasifikasi akun laporan keuangan tidak valid.');
+                }
+
+                $row = $report['rows']->get($account->id);
+                $balance = BigDecimal::of($row[$balanceType.'_debit'] ?? '0.00')
+                    ->minus($row[$balanceType.'_credit'] ?? '0.00');
+
+                if (in_array($account->account_type, [Account::TYPE_LIABILITY, Account::TYPE_EQUITY, Account::TYPE_REVENUE], true)) {
+                    $balance = $balance->negated();
+                }
+
+                $groups[$account->account_type]['rows']->put($account->id, [
+                    'id' => $account->id,
+                    'code' => $account->code,
+                    'name' => $account->name,
+                    'account_type' => $account->account_type,
+                    'balance' => (string) $balance->toScale(2),
+                ]);
+                $groups[$account->account_type]['total'] = $groups[$account->account_type]['total']->plus($balance);
+            }
+        }
+
+        foreach ($groups as &$group) {
+            $group['total'] = (string) $group['total']->toScale(2);
+        }
+
+        return $groups;
+    }
 
     /**
      * Baca jurnal tanpa mengubah data akuntansi.
