@@ -17,13 +17,13 @@ class WithdrawalService
     /**
      * Membukukan penarikan saldo nasabah.
      *
-     * Untuk transaksi baru yang memiliki cash_account_id:
+     * Posting baru wajib memiliki cash_account_id:
      * - saldo nasabah berkurang;
      * - saldo Kas/Bank berkurang;
      * - jurnal akuntansi otomatis dibuat.
      *
-     * cash_account_id tetap nullable agar transaksi lama
-     * dan test lama tetap kompatibel.
+     * Transaksi historis tanpa cash_account_id tetap
+     * didukung pada pembacaan dan pembatalan.
      */
     public function post(
         Withdrawal $withdrawal,
@@ -41,14 +41,10 @@ class WithdrawalService
                 );
             }
             /**
-             * Transaksi yang diposting melalui aplikasi wajib
-             * memiliki sumber Kas/Bank.
-             *
-             * $userId null tetap diizinkan sementara untuk
-             * kompatibilitas transaksi/test historis.
+             * Semua posting baru wajib memiliki sumber Kas/Bank,
+             * terlepas dari ada atau tidaknya userId.
              */
-            if (
-                $userId !== null && $withdrawal->cash_account_id === null) {
+            if ($withdrawal->cash_account_id === null) {
                 throw new Exception(
                     'Pilih Kas/Bank sumber pembayaran sebelum penarikan diposting.'
                 );
@@ -154,10 +150,7 @@ class WithdrawalService
             ]);
 
             /**
-             * Transaksi lama mungkin belum mempunyai
-             * sumber Kas/Bank.
-             *
-             * Transaksi baru dari UI wajib memilikinya.
+             * Catat pengeluaran Kas/Bank dan jurnal untuk posting baru.
              */
             if ($withdrawal->cash_account_id !== null) {
                 /**

@@ -63,6 +63,72 @@ afterEach(function (): void {
     }
 });
 
+test('posting penarikan tanpa akun kas ditolak tanpa perubahan keuangan', function (bool $withUser): void {
+    $user = User::factory()->create();
+    $customer = Customer::create([
+        'customer_code' => 'WD-TANPA-KAS', 'name' => 'Nasabah Uji Tanpa Kas',
+    ]);
+    BalanceMutation::create([
+        'customer_id' => $customer->id, 'type' => 'credit', 'amount' => '100.00',
+        'reference_type' => 'test_opening_balance', 'reference_id' => $customer->id,
+        'transaction_date' => now()->toDateString(), 'description' => 'Saldo awal pengujian',
+    ]);
+    $withdrawal = Withdrawal::create([
+        'withdrawal_number' => 'WD-TANPA-KAS', 'customer_id' => $customer->id,
+        'cash_account_id' => null, 'transaction_date' => now()->toDateString(),
+        'amount' => '100.00', 'status' => 'draft',
+    ]);
+    $balanceMutationCount = BalanceMutation::count();
+    $cashMutationCount = CashMutation::count();
+    $journalCount = JournalEntry::count();
+
+    expect(fn () => app(WithdrawalService::class)->post($withdrawal, $withUser ? $user->id : null))
+        ->toThrow(Exception::class, 'Pilih Kas/Bank sumber pembayaran sebelum penarikan diposting.');
+
+    $this->assertDatabaseCount('balance_mutations', $balanceMutationCount);
+    $this->assertDatabaseCount('cash_mutations', $cashMutationCount);
+    $this->assertDatabaseCount('journal_entries', $journalCount);
+    expect($withdrawal->fresh())->status->toBe('draft')->posted_at->toBeNull()->posted_by->toBeNull();
+})->with([
+    'userId null' => [false],
+    'userId non-null' => [true],
+]);
+
+test('pembatalan penarikan historis tanpa akun kas dan jurnal tetap mengembalikan saldo', function (): void {
+    $user = User::factory()->create();
+    $customer = Customer::create([
+        'customer_code' => 'WD-HISTORIS', 'name' => 'Nasabah Uji Histori',
+    ]);
+    BalanceMutation::create([
+        'customer_id' => $customer->id, 'type' => 'credit', 'amount' => '100.00',
+        'reference_type' => 'test_opening_balance', 'reference_id' => $customer->id,
+        'transaction_date' => now()->toDateString(), 'description' => 'Saldo awal pengujian',
+    ]);
+    $withdrawal = Withdrawal::create([
+        'withdrawal_number' => 'WD-HISTORIS', 'customer_id' => $customer->id,
+        'cash_account_id' => null, 'transaction_date' => now()->toDateString(),
+        'amount' => '100.00', 'status' => 'posted', 'posted_at' => now(),
+    ]);
+    $originalMutation = BalanceMutation::create([
+        'customer_id' => $customer->id, 'type' => 'debit', 'amount' => '100.00',
+        'reference_type' => 'withdrawal', 'reference_id' => $withdrawal->id,
+        'transaction_date' => now()->toDateString(), 'description' => 'Penarikan historis',
+    ]);
+    $originalBefore = $originalMutation->fresh()->getAttributes();
+    $cashMutationCount = CashMutation::count();
+    $journalCount = JournalEntry::count();
+
+    app(WithdrawalService::class)->cancel($withdrawal, 'Koreksi penarikan historis', $user->id, true);
+
+    expect($withdrawal->fresh())->status->toBe('cancelled')->cash_account_id->toBeNull();
+    expect($originalMutation->fresh()->getAttributes())->toBe($originalBefore);
+    $reversal = BalanceMutation::where('reference_type', 'withdrawal_cancellation')
+        ->where('reference_id', $withdrawal->id)->sole();
+    expect($reversal)->type->toBe('credit')->amount->toBe('100.00')->customer_id->toBe($customer->id);
+    $this->assertDatabaseCount('cash_mutations', $cashMutationCount);
+    $this->assertDatabaseCount('journal_entries', $journalCount);
+});
+
 test(
     'penarikan dan pembatalan menjaga saldo nasabah kas dan jurnal tetap konsisten',
     function (): void {

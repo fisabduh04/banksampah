@@ -5,6 +5,8 @@ use App\Filament\Resources\Deposits\Pages\ListDeposits;
 use App\Filament\Resources\Withdrawals\Pages\EditWithdrawal;
 use App\Filament\Resources\Withdrawals\Pages\ListWithdrawals;
 use App\Models\BalanceMutation;
+use App\Models\CashAccount;
+use App\Models\CashMutation;
 use App\Models\Customer;
 use App\Models\Deposit;
 use App\Models\InventoryMovement;
@@ -234,7 +236,17 @@ test('kegagalan pencatatan biaya posting membatalkan status saldo dan seluruh st
 
 test('penarikan ulang dengan object lama tidak menggandakan debit', function (): void {
     ['customer' => $customer] = cancellationRecords();
+    $cashAccount = CashAccount::create([
+        'code' => 'KAS-'.Str::ulid(), 'name' => 'Kas Pengujian',
+        'account_type' => CashAccount::TYPE_CASH, 'is_active' => true,
+    ]);
+    CashMutation::create([
+        'cash_account_id' => $cashAccount->id, 'mutation_type' => CashMutation::TYPE_IN,
+        'amount' => '200.00', 'transaction_date' => '2026-09-13',
+        'reference_type' => 'opening_balance_test', 'reference_id' => $cashAccount->id,
+    ]);
     $withdrawal = Withdrawal::create(['withdrawal_number' => 'W-'.Str::ulid(), 'customer_id' => $customer->id,
+        'cash_account_id' => $cashAccount->id,
         'transaction_date' => '2026-09-14', 'status' => 'draft', 'amount' => '80.00']);
     $stale = $withdrawal->fresh();
     app(WithdrawalService::class)->post($withdrawal);
@@ -246,7 +258,17 @@ test('penarikan ulang dengan object lama tidak menggandakan debit', function ():
 test('penarikan memakai desimal tepat hingga sisa satu sen pada nominal besar', function (): void {
     ['customer' => $customer] = cancellationRecords();
     BalanceMutation::create(['customer_id' => $customer->id, 'type' => 'credit', 'amount' => '9999999999899.99', 'transaction_date' => '2026-09-14']);
+    $cashAccount = CashAccount::create([
+        'code' => 'KAS-'.Str::ulid(), 'name' => 'Kas Pengujian',
+        'account_type' => CashAccount::TYPE_CASH, 'is_active' => true,
+    ]);
+    CashMutation::create([
+        'cash_account_id' => $cashAccount->id, 'mutation_type' => CashMutation::TYPE_IN,
+        'amount' => '9999999999999.99', 'transaction_date' => '2026-09-13',
+        'reference_type' => 'opening_balance_test', 'reference_id' => $cashAccount->id,
+    ]);
     $withdrawal = Withdrawal::create(['withdrawal_number' => 'W-'.Str::ulid(), 'customer_id' => $customer->id,
+        'cash_account_id' => $cashAccount->id,
         'transaction_date' => '2026-09-14', 'status' => 'draft', 'amount' => '9999999999999.98']);
     app(WithdrawalService::class)->post($withdrawal);
     $balance = DB::table('balance_mutations')->where('customer_id', $customer->id)
@@ -256,7 +278,17 @@ test('penarikan memakai desimal tepat hingga sisa satu sen pada nominal besar', 
 
 test('penarikan yang gagal menulis mutasi tetap draft tanpa mengubah saldo', function (): void {
     ['customer' => $customer] = cancellationRecords();
+    $cashAccount = CashAccount::create([
+        'code' => 'KAS-'.Str::ulid(), 'name' => 'Kas Pengujian',
+        'account_type' => CashAccount::TYPE_CASH, 'is_active' => true,
+    ]);
+    CashMutation::create([
+        'cash_account_id' => $cashAccount->id, 'mutation_type' => CashMutation::TYPE_IN,
+        'amount' => '200.00', 'transaction_date' => '2026-09-13',
+        'reference_type' => 'opening_balance_test', 'reference_id' => $cashAccount->id,
+    ]);
     $withdrawal = Withdrawal::create(['withdrawal_number' => 'W-'.Str::ulid(), 'customer_id' => $customer->id,
+        'cash_account_id' => $cashAccount->id,
         'transaction_date' => '2026-09-14', 'status' => 'draft', 'amount' => '80.00']);
     $event = 'eloquent.creating: '.BalanceMutation::class;
     Event::listen($event, function (BalanceMutation $mutation): void {
@@ -276,7 +308,17 @@ test('penarikan yang gagal menulis mutasi tetap draft tanpa mengubah saldo', fun
 
 test('penarikan menolak nominal tidak sah atau melebihi saldo', function (string $amount): void {
     ['customer' => $customer] = cancellationRecords();
+    $cashAccount = CashAccount::create([
+        'code' => 'KAS-'.Str::ulid(), 'name' => 'Kas Pengujian',
+        'account_type' => CashAccount::TYPE_CASH, 'is_active' => true,
+    ]);
+    CashMutation::create([
+        'cash_account_id' => $cashAccount->id, 'mutation_type' => CashMutation::TYPE_IN,
+        'amount' => '200.00', 'transaction_date' => '2026-09-13',
+        'reference_type' => 'opening_balance_test', 'reference_id' => $cashAccount->id,
+    ]);
     $withdrawal = Withdrawal::create(['withdrawal_number' => 'W-'.Str::ulid(), 'customer_id' => $customer->id,
+        'cash_account_id' => $cashAccount->id,
         'transaction_date' => '2026-09-14', 'status' => 'draft', 'amount' => $amount]);
     expect(fn () => app(WithdrawalService::class)->post($withdrawal))->toThrow(Exception::class);
     expect($withdrawal->fresh()->status)->toBe('draft');
@@ -294,7 +336,17 @@ function editableCustomerTransaction(string $kind): array
         $record->items()->create(['waste_type_id' => $waste->id, 'weight' => '10.000', 'price' => '10.00', 'subtotal' => '100.00']);
         $page = EditDeposit::class;
     } else {
+        $cashAccount = CashAccount::create([
+            'code' => 'KAS-'.Str::ulid(), 'name' => 'Kas Pengujian',
+            'account_type' => CashAccount::TYPE_CASH, 'is_active' => true,
+        ]);
+        CashMutation::create([
+            'cash_account_id' => $cashAccount->id, 'mutation_type' => CashMutation::TYPE_IN,
+            'amount' => '200.00', 'transaction_date' => '2026-09-13',
+            'reference_type' => 'opening_balance_test', 'reference_id' => $cashAccount->id,
+        ]);
         $record = Withdrawal::create(['withdrawal_number' => 'EDIT-'.Str::ulid(), 'customer_id' => $customer->id,
+            'cash_account_id' => $cashAccount->id,
             'transaction_date' => '2026-09-14', 'status' => 'draft', 'amount' => '10.00']);
         $page = EditWithdrawal::class;
     }

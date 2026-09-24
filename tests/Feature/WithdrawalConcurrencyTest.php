@@ -1,11 +1,14 @@
 <?php
 
 use App\Models\BalanceMutation;
+use App\Models\CashAccount;
+use App\Models\CashMutation;
 use App\Models\Customer;
 use App\Models\Deposit;
 use App\Models\User;
 use App\Models\WasteType;
 use App\Models\Withdrawal;
+use App\Services\CashMutationService;
 use App\Services\DepositService;
 use App\Services\WithdrawalService;
 use Database\Seeders\AccountSeeder;
@@ -132,6 +135,21 @@ test('MySQL melindungi saldo saat penarikan dan pembatalan bersamaan', function 
         app(AccountSeeder::class)->run();
 
         $user = User::factory()->create();
+        $cashAccount = CashAccount::create([
+            'code' => 'KAS-RACE', 'name' => 'Kas Uji Concurrency',
+            'account_type' => CashAccount::TYPE_CASH, 'is_active' => true,
+        ]);
+        app(CashMutationService::class)->record(
+            cashAccountId: $cashAccount->id,
+            transactionDate: now()->toDateString(),
+            mutationType: CashMutation::TYPE_IN,
+            amount: '200.00',
+            referenceType: 'opening_balance_test',
+            referenceId: $cashAccount->id,
+            referenceNumber: 'SALDO-AWAL-RACE',
+            description: 'Saldo Kas pengujian concurrency',
+            userId: $user->id
+        );
         $customer = Customer::create(['customer_code' => 'RACE', 'name' => 'Nasabah Uji Persaingan']);
         $waste = WasteType::create(['code' => 'RACE', 'name' => 'Bahan Uji Persaingan']);
         $deposit = Deposit::create(['deposit_number' => 'RACE', 'customer_id' => $customer->id,
@@ -139,6 +157,7 @@ test('MySQL melindungi saldo saat penarikan dan pembatalan bersamaan', function 
         $deposit->items()->create(['waste_type_id' => $waste->id, 'weight' => '10.000', 'price' => '10.00', 'subtotal' => '100.00']);
         app(DepositService::class)->post($deposit);
         $withdrawal = Withdrawal::create(['withdrawal_number' => 'W1', 'customer_id' => $customer->id,
+            'cash_account_id' => $cashAccount->id,
             'transaction_date' => now()->toDateString(), 'status' => 'draft', 'amount' => '80.00']);
         $withdrawCode = 'app(App\\Services\\WithdrawalService::class)->post(App\\Models\\Withdrawal::findOrFail(%d));';
         if ($scenario === 'deposit_cancellation') {
