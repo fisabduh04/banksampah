@@ -1,5 +1,6 @@
 <?php
 
+use App\Filament\Resources\CashMutations\Pages\ListCashMutations;
 use App\Models\Account;
 use App\Models\CashAccount;
 use App\Models\CashMutation;
@@ -7,8 +8,10 @@ use App\Models\JournalEntry;
 use App\Models\User;
 use App\Services\CashMutationService;
 use Database\Seeders\AccountSeeder;
+use Filament\Forms\Components\Select;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 uses(TestCase::class);
@@ -408,3 +411,155 @@ test(
         )->toBe('50000.00');
     }
 );
+
+test('transaksi kas manual menolak akun kontrol tanpa mengubah saldo atau jurnal', function (string $method, string $counterSystemKey, string $cashAccountType): void {
+    $user = User::factory()->create();
+    $cashAccount = CashAccount::create([
+        'code' => 'KAS-KONTROL', 'name' => 'Rekening Uji Akun Kontrol',
+        'account_type' => $cashAccountType, 'is_active' => true,
+    ]);
+    CashMutation::create([
+        'cash_account_id' => $cashAccount->id, 'mutation_type' => CashMutation::TYPE_IN,
+        'amount' => '200.00', 'transaction_date' => now()->toDateString(),
+        'reference_type' => 'test_opening_balance', 'reference_id' => $cashAccount->id,
+    ]);
+    $counterAccount = Account::where('system_key', $counterSystemKey)->sole();
+    $cashMutationCount = CashMutation::count();
+    $journalCount = JournalEntry::count();
+
+    expect(fn () => app(CashMutationService::class)->{$method}(
+        cashAccountId: $cashAccount->id,
+        transactionDate: now()->toDateString(),
+        amount: '50.00',
+        referenceNumber: 'KONTROL-DITOLAK',
+        description: 'Uji proteksi akun kontrol',
+        counterAccountId: $counterAccount->id,
+        userId: $user->id,
+        idempotencyKey: (string) Str::uuid()
+    ))->toThrow(RuntimeException::class, 'Akun kontrol tidak boleh digunakan sebagai akun lawan transaksi kas manual.');
+
+    $this->assertDatabaseCount('cash_mutations', $cashMutationCount);
+    $this->assertDatabaseCount('journal_entries', $journalCount);
+    expect(app(CashMutationService::class)->balance($cashAccount))->toBe('200.00');
+})->with(['recordManualReceipt', 'recordManualExpense'])
+    ->with(['cash', 'bank', 'collector_receivable', 'inventory', 'customer_savings'])
+    ->with(['cash', 'bank']);
+
+test('transaksi kas manual tetap menerima akun nonkontrol dan system key kosong', function (string $method, ?string $counterSystemKey): void {
+    $user = User::factory()->create();
+    $cashAccount = CashAccount::create([
+        'code' => 'KAS-NONKONTROL', 'name' => 'Kas Uji Akun Nonkontrol',
+        'account_type' => CashAccount::TYPE_CASH, 'is_active' => true,
+    ]);
+    CashMutation::create([
+        'cash_account_id' => $cashAccount->id, 'mutation_type' => CashMutation::TYPE_IN,
+        'amount' => '200.00', 'transaction_date' => now()->toDateString(),
+        'reference_type' => 'test_opening_balance', 'reference_id' => $cashAccount->id,
+    ]);
+    $counterAccount = $counterSystemKey === null
+        ? Account::create([
+            'code' => '59'.$user->id, 'name' => 'Akun Manual Uji',
+            'account_type' => Account::TYPE_EXPENSE, 'normal_balance' => Account::NORMAL_DEBIT,
+            'is_active' => true, 'is_postable' => true, 'system_key' => null,
+        ])
+        : Account::where('system_key', $counterSystemKey)->sole();
+
+    $mutation = app(CashMutationService::class)->{$method}(
+        cashAccountId: $cashAccount->id,
+        transactionDate: now()->toDateString(),
+        amount: '50.00',
+        referenceNumber: 'NONKONTROL-DITERIMA',
+        description: 'Uji akun lawan yang tetap diizinkan',
+        counterAccountId: $counterAccount->id,
+        userId: $user->id,
+        idempotencyKey: (string) Str::uuid()
+    );
+
+    expect($mutation->counter_account_id)->toBe($counterAccount->id);
+    expect(app(CashMutationService::class)->balance($cashAccount))
+        ->toBe($method === 'recordManualReceipt' ? '250.00' : '150.00');
+    $journal = JournalEntry::where('reference_type', $mutation->reference_type)
+        ->where('reference_id', $mutation->id)->with('lines')->sole();
+    expect($journal->lines)->toHaveCount(2);
+    $counterLine = $journal->lines->where('account_id', $counterAccount->id)->sole();
+    expect($counterLine->debit)->toBe($method === 'recordManualExpense' ? '50.00' : '0.00');
+    expect($counterLine->credit)->toBe($method === 'recordManualReceipt' ? '50.00' : '0.00');
+})->with(['recordManualReceipt', 'recordManualExpense'])
+    ->with(['opening_balance', 'sales_revenue', 'cogs', 'operating_expense', null]);
+
+test('replay identik kas manual historis dengan akun kontrol tetap mengembalikan transaksi asal', function (string $method, string $referenceType, string $mutationType): void {
+    $user = User::factory()->create();
+    $cashAccount = CashAccount::create([
+        'code' => 'KAS-HISTORIS', 'name' => 'Kas Uji Replay Historis',
+        'account_type' => CashAccount::TYPE_CASH, 'is_active' => true,
+    ]);
+    CashMutation::create([
+        'cash_account_id' => $cashAccount->id, 'mutation_type' => CashMutation::TYPE_IN,
+        'amount' => '200.00', 'transaction_date' => now()->toDateString(),
+        'reference_type' => 'test_opening_balance', 'reference_id' => $cashAccount->id,
+    ]);
+    $counterAccount = Account::where('system_key', 'inventory')->sole();
+    $idempotencyKey = (string) Str::uuid();
+    $original = CashMutation::create([
+        'cash_account_id' => $cashAccount->id, 'counter_account_id' => $counterAccount->id,
+        'transaction_date' => now()->toDateString(), 'mutation_type' => $mutationType,
+        'amount' => '50.00', 'reference_type' => $referenceType, 'reference_id' => null,
+        'reference_number' => 'MANUAL-HISTORIS', 'description' => 'Transaksi historis pengujian',
+        'created_by' => $user->id, 'idempotency_key' => $idempotencyKey,
+    ]);
+    $originalAttributes = $original->fresh()->getAttributes();
+    $cashMutationCount = CashMutation::count();
+    $journalCount = JournalEntry::count();
+    $balance = app(CashMutationService::class)->balance($cashAccount);
+
+    $replayed = app(CashMutationService::class)->{$method}(
+        cashAccountId: $cashAccount->id,
+        transactionDate: now()->toDateString(),
+        amount: '50.00',
+        referenceNumber: 'MANUAL-HISTORIS',
+        description: 'Transaksi historis pengujian',
+        counterAccountId: $counterAccount->id,
+        userId: $user->id,
+        idempotencyKey: $idempotencyKey
+    );
+
+    expect($replayed->getAttributes())->toBe($originalAttributes);
+    $this->assertDatabaseCount('cash_mutations', $cashMutationCount);
+    $this->assertDatabaseCount('journal_entries', $journalCount);
+    expect(app(CashMutationService::class)->balance($cashAccount))->toBe($balance);
+})->with([
+    ['recordManualReceipt', 'manual_receipt', 'in'],
+    ['recordManualExpense', 'manual_expense', 'out'],
+]);
+
+test('pilihan akun lawan kas manual menyembunyikan akun kontrol dan mempertahankan akun valid', function (string $action): void {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+    $accountAttributes = [
+        'name' => 'Akun Pilihan Manual Uji', 'account_type' => Account::TYPE_EXPENSE,
+        'normal_balance' => Account::NORMAL_DEBIT, 'is_active' => true,
+        'is_postable' => true, 'system_key' => null,
+    ];
+    $customAccount = Account::create([...$accountAttributes, 'code' => 'UI-1-'.$user->id]);
+    $inactiveAccount = Account::create([...$accountAttributes, 'code' => 'UI-2-'.$user->id, 'is_active' => false]);
+    $nonPostableAccount = Account::create([...$accountAttributes, 'code' => 'UI-3-'.$user->id, 'is_postable' => false]);
+    $systemAccounts = Account::whereNotNull('system_key')->get()->keyBy('system_key');
+
+    Livewire::test(ListCashMutations::class)
+        ->mountAction($action)
+        ->assertActionMounted($action)
+        ->assertFormFieldExists('counter_account_id', function (Select $field) use ($systemAccounts, $customAccount, $inactiveAccount, $nonPostableAccount): bool {
+            $options = $field->getOptions();
+            foreach (['cash', 'bank', 'collector_receivable', 'inventory', 'customer_savings'] as $systemKey) {
+                expect($options)->not->toHaveKey((string) $systemAccounts->get($systemKey)->id);
+            }
+            foreach (['opening_balance', 'sales_revenue', 'cogs', 'operating_expense'] as $systemKey) {
+                expect($options)->toHaveKey((string) $systemAccounts->get($systemKey)->id);
+            }
+            expect($options)->toHaveKey((string) $customAccount->id)
+                ->not->toHaveKey((string) $inactiveAccount->id)
+                ->not->toHaveKey((string) $nonPostableAccount->id);
+
+            return true;
+        });
+})->with(['penerimaanKas', 'pengeluaranKas']);

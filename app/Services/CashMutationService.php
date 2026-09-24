@@ -16,6 +16,14 @@ use RuntimeException;
 
 class CashMutationService
 {
+    public const MANUAL_COUNTER_ACCOUNT_FORBIDDEN_SYSTEM_KEYS = [
+        'cash',
+        'bank',
+        'collector_receivable',
+        'inventory',
+        'customer_savings',
+    ];
+
     /**
      * Mencatat mutasi Kas/Bank.
      *
@@ -410,9 +418,14 @@ class CashMutationService
                 ->where('system_key', $cashSystemKey)
                 ->firstOrFail();
 
-            if ($cashLedgerAccount->id === $counterAccountId) {
+            $counterAccount = Account::query()
+                ->whereKey($counterAccountId)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (in_array($counterAccount->system_key, self::MANUAL_COUNTER_ACCOUNT_FORBIDDEN_SYSTEM_KEYS, true)) {
                 throw new RuntimeException(
-                    'Akun lawan tidak boleh sama dengan akun Kas/Bank.'
+                    'Akun kontrol tidak boleh digunakan sebagai akun lawan transaksi kas manual.'
                 );
             }
 
@@ -661,9 +674,14 @@ class CashMutationService
                 ->where('system_key', $cashSystemKey)
                 ->firstOrFail();
 
-            if ($cashLedgerAccount->id === $counterAccountId) {
+            $counterAccount = Account::query()
+                ->whereKey($counterAccountId)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (in_array($counterAccount->system_key, self::MANUAL_COUNTER_ACCOUNT_FORBIDDEN_SYSTEM_KEYS, true)) {
                 throw new RuntimeException(
-                    'Akun lawan tidak boleh sama dengan akun Kas/Bank.'
+                    'Akun kontrol tidak boleh digunakan sebagai akun lawan transaksi kas manual.'
                 );
             }
 

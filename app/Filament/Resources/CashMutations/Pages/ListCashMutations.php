@@ -103,7 +103,7 @@ class ListCashMutations extends ListRecords
                                         ->whereNull('system_key')
                                         ->orWhereNotIn(
                                             'system_key',
-                                            ['cash', 'bank']
+                                            CashMutationService::MANUAL_COUNTER_ACCOUNT_FORBIDDEN_SYSTEM_KEYS
                                         );
                                 })
                                 ->orderBy('code')
@@ -124,7 +124,8 @@ class ListCashMutations extends ListRecords
                             'required' => 'Pilih akun lawan penerimaan.',
                         ])
                         ->helperText(
-                            'Contoh: Saldo Awal, Modal, Pendapatan lain, atau akun lain sesuai sumber penerimaan.'
+                            'Contoh: Saldo Awal, Modal, Pendapatan lain, atau akun lain sesuai sumber penerimaan. '
+                            .'Akun kontrol Kas/Bank, Piutang, Persediaan, dan Tabungan dikelola melalui transaksi bisnis masing-masing.'
                         ),
 
                     TextInput::make('amount')
@@ -265,7 +266,7 @@ class ListCashMutations extends ListRecords
                                         ->whereNull('system_key')
                                         ->orWhereNotIn(
                                             'system_key',
-                                            ['cash', 'bank']
+                                            CashMutationService::MANUAL_COUNTER_ACCOUNT_FORBIDDEN_SYSTEM_KEYS
                                         );
                                 })
                                 ->orderBy('code')
@@ -286,7 +287,8 @@ class ListCashMutations extends ListRecords
                             'required' => 'Pilih akun lawan pengeluaran.',
                         ])
                         ->helperText(
-                            'Contoh: Beban Operasional atau akun aset sesuai tujuan pengeluaran.'
+                            'Contoh: Beban Operasional atau akun aset sesuai tujuan pengeluaran. '
+                            .'Akun kontrol Kas/Bank, Piutang, Persediaan, dan Tabungan dikelola melalui transaksi bisnis masing-masing.'
                         ),
 
                     TextInput::make('amount')
