@@ -14,6 +14,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Validator;
@@ -85,8 +86,7 @@ class GeneralLedger extends Page implements HasTable
          * akun historis tetap boleh dilihat.
          */
         if ($this->accountId === null) {
-            $this->accountId = Account::query()
-                ->where('is_postable', true)
+            $this->accountId = $this->selectableAccounts()
                 ->orderBy('code')
                 ->value('id');
         }
@@ -122,10 +122,25 @@ class GeneralLedger extends Page implements HasTable
      */
     public function getAccounts(): Collection
     {
-        return Account::query()
-            ->where('is_postable', true)
+        return $this->selectableAccounts()
             ->orderBy('code')
             ->get();
+    }
+
+    /**
+     * Akun yang dapat dipilih: akun postable atau akun historis
+     * yang memiliki baris jurnal, termasuk jika kini non-postable.
+     */
+    private function selectableAccounts(): Builder
+    {
+        return Account::query()
+            ->where(function (Builder $query): void {
+                $query->where('is_postable', true)
+                    ->orWhereIn(
+                        'id',
+                        JournalLine::query()->select('account_id')
+                    );
+            });
     }
 
     /**
@@ -359,9 +374,8 @@ class GeneralLedger extends Page implements HasTable
             return $empty;
         }
 
-        $account = Account::query()
+        $account = $this->selectableAccounts()
             ->whereKey($this->accountId)
-            ->where('is_postable', true)
             ->first();
 
         if ($account === null) {
