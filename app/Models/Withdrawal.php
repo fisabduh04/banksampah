@@ -9,6 +9,7 @@ class Withdrawal extends Model
 {
     protected $fillable = [
         'withdrawal_number',
+        'idempotency_key',
         'customer_id',
         'transaction_date',
         'amount',

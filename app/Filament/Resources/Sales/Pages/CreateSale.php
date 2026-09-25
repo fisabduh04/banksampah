@@ -33,9 +33,6 @@ class CreateSale extends CreateRecord
      */
     protected function mutateFormDataBeforeCreate(array $data): array
     {
-        /** Nomor tetap untuk setiap pengiriman ulang formulir yang sama. */
-        $data['sale_number'] = $this->creationNumber;
-
         /*
          * Setiap transaksi baru selalu dimulai sebagai Draft.
          */

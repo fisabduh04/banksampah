@@ -10,6 +10,7 @@ class Deposit extends Model
 {
     protected $fillable = [
         'deposit_number',
+        'idempotency_key',
         'customer_id',
         'transaction_date',
         'total_weight',

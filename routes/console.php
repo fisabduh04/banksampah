@@ -1,5 +1,6 @@
 <?php
 
+use App\Services\FinancialDocumentService;
 use App\Services\TrialBackupRestorer;
 use App\Services\TrialCleanupReport;
 use App\Services\TrialCleanupService;
@@ -10,6 +11,15 @@ use Illuminate\Support\Facades\DB;
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
+
+Artisan::command('bank-sampah:renumber-documents {--apply}', function (FinancialDocumentService $service): int {
+    $apply = (bool) $this->option('apply');
+    $changes = $service->renumberLegacyDocuments($apply);
+    $this->table(['Jenis', 'ID', 'Nomor lama', 'Nomor baru'], $changes);
+    $this->info($apply ? 'Penomoran dan rujukan diperbarui; riwayat perubahan tersimpan.' : 'Pratinjau saja; belum ada perubahan tersimpan.');
+
+    return 0;
+})->purpose('Rapikan nomor ULID lama tanpa mengubah nilai transaksi; gunakan --apply untuk menyimpan');
 
 Artisan::command('bank-sampah:trial-prepare {--backup=} {--backup-sha=} {--database=} {--server=} {--out=} {--latest}', function (TrialBackupRestorer $restorer, TrialCleanupService $cleanup): int {
     $output = $this->option('out');

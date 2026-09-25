@@ -17,6 +17,7 @@ class Sale extends Model
 
     protected $fillable = [
         'sale_number',
+        'idempotency_key',
         'collector_id',
         'transaction_date',
         'status',
