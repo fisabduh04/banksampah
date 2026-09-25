@@ -2,16 +2,19 @@
 
 namespace App\Filament\Resources\Sales\Pages;
 
+use App\Filament\CreatesFinancialDocument;
 use App\Filament\Resources\Sales\SaleResource;
 use App\Models\Sale;
 use Filament\Resources\Pages\CreateRecord;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 
 class CreateSale extends CreateRecord
 {
+    use CreatesFinancialDocument;
+
     protected static string $resource = SaleResource::class;
+
+    protected ?bool $hasDatabaseTransactions = true;
 
     /**
      * Judul halaman dalam Bahasa Indonesia.
@@ -30,13 +33,8 @@ class CreateSale extends CreateRecord
      */
     protected function mutateFormDataBeforeCreate(array $data): array
     {
-        /*
-         * Gunakan nomor sementara yang unik.
-         *
-         * Setelah database memberikan ID transaksi,
-         * nomor final akan dibuat pada afterCreate().
-         */
-        $data['sale_number'] = 'TMP-'.Str::ulid();
+        /** Nomor tetap untuk setiap pengiriman ulang formulir yang sama. */
+        $data['sale_number'] = $this->creationNumber;
 
         /*
          * Setiap transaksi baru selalu dimulai sebagai Draft.
@@ -78,41 +76,10 @@ class CreateSale extends CreateRecord
      * 1. Header Sale dibuat.
      * 2. Relasi items dari Repeater disimpan.
      *
-     * Pada tahap ini kita membuat nomor transaksi final
-     * dan menghitung ulang subtotal serta total transaksi.
+     * Hitung ulang subtotal serta total dalam transaksi penyimpanan dokumen.
      */
     protected function afterCreate(): void
     {
-        /*
-         * ============================================================
-         * 1. BUAT NOMOR PENJUALAN FINAL
-         * ============================================================
-         */
-
-        $tanggal = Carbon::parse(
-            $this->record->transaction_date
-        )->format('Ymd');
-
-        /*
-         * Contoh:
-         *
-         * ID database = 12
-         * tanggal     = 10 September 2026
-         *
-         * hasil:
-         * PJ-20260910-000012
-         */
-        $nomorPenjualan =
-            'PJ-'
-            .$tanggal
-            .'-'
-            .str_pad(
-                (string) $this->record->getKey(),
-                6,
-                '0',
-                STR_PAD_LEFT
-            );
-
         /*
          * ============================================================
          * 2. HITUNG ULANG SUBTOTAL DI DATABASE
@@ -153,8 +120,6 @@ class CreateSale extends CreateRecord
          * ============================================================
          */
         $this->record->update([
-            'sale_number' => $nomorPenjualan,
-
             'total_weight' => $ringkasan?->total_weight ?? 0,
 
             'total_amount' => $ringkasan?->total_amount ?? 0,

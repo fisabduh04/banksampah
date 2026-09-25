@@ -38,6 +38,9 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 if (config('database.default') !== 'mysql' || ! preg_match('/^banksampah_finance_test_[a-f0-9]{12}$/', Illuminate\Support\Facades\DB::connection()->getDatabaseName())) {
     throw new RuntimeException('Proses pengujian menolak database di luar lingkup uji.');
 }
+if (Illuminate\Support\Facades\DB::connection()->selectOne('SELECT DATABASE() AS db, @@hostname AS server')->db !== getenv('DB_DATABASE') || Illuminate\Support\Facades\DB::connection()->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+    throw new RuntimeException('Worker menolak identitas database/server yang berbeda.');
+}
 touch(getenv('FINANCE_RACE_READY'));
 $deadline = microtime(true) + 30;
 while (! file_exists(getenv('FINANCE_RACE_GO'))) {
@@ -60,6 +63,7 @@ PHP;
             $temporaryFiles[] = $readyPath;
             file_put_contents($scriptPath, "<?php\n".$code);
             $process = new Process([PHP_BINARY, $scriptPath], base_path(), [
+                'DB_HOST' => '127.0.0.1', 'DB_PORT' => '3306', 'DB_SOCKET' => '',
                 'APP_ENV' => 'testing', 'DB_CONNECTION' => 'mysql', 'DB_DATABASE' => $database, 'DB_URL' => '',
                 'CACHE_STORE' => 'array', 'SESSION_DRIVER' => 'array', 'QUEUE_CONNECTION' => 'sync',
                 'FINANCE_RACE_READY' => $readyPath, 'FINANCE_RACE_GO' => $goPath,
@@ -123,13 +127,20 @@ test('MySQL melindungi saldo saat penarikan dan pembatalan bersamaan', function 
     }
     $database = 'banksampah_finance_test_'.bin2hex(random_bytes(6));
     $previous = config('database.default');
-    $connection = [...config('database.connections.mysql'), 'url' => null];
+    $connection = [...config('database.connections.mysql'), 'url' => null, 'host' => '127.0.0.1', 'port' => 3306, 'unix_socket' => ''];
     config(['database.connections.finance_admin' => [...$connection, 'database' => null]]);
+    if (! preg_match('/^banksampah_(?:journal|finance)_test_[a-f0-9]{12}$/', $database) || DB::connection('finance_admin')->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+        throw new RuntimeException('Server/nama database disposable tidak sesuai.');
+    }
     DB::connection('finance_admin')->statement('CREATE DATABASE `'.$database.'`');
+    $databaseCreatedByThisTest = true;
     try {
         config(['database.connections.withdrawal_race' => [...$connection, 'database' => $database], 'database.default' => 'withdrawal_race']);
         if (DB::connection()->selectOne('SELECT DATABASE() AS name')->name !== $database) {
             throw new RuntimeException('Koneksi database pengujian tidak sesuai.');
+        }
+        if (! $databaseCreatedByThisTest || DB::connection()->selectOne('SELECT DATABASE() AS db, @@hostname AS server')->db !== $database || DB::connection()->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+            throw new RuntimeException('Migrasi menolak target di luar database disposable milik proses ini.');
         }
         Artisan::call('migrate', ['--database' => 'withdrawal_race', '--force' => true, '--no-interaction' => true]);
         app(AccountSeeder::class)->run();
@@ -195,6 +206,9 @@ test('MySQL melindungi saldo saat penarikan dan pembatalan bersamaan', function 
         config(['database.default' => $previous]);
         if (! preg_match('/^banksampah_finance_test_[a-f0-9]{12}$/', $database)) {
             throw new RuntimeException('Pembersihan menolak database di luar lingkup uji.');
+        }
+        if (! $databaseCreatedByThisTest || DB::connection('finance_admin')->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+            throw new RuntimeException('Database bukan milik proses pengujian ini.');
         }
         DB::connection('finance_admin')->statement('DROP DATABASE `'.$database.'`');
         DB::purge('finance_admin');

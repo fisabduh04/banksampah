@@ -36,19 +36,29 @@ beforeEach(function (): void {
     if (! app()->environment('testing')) {
         throw new RuntimeException('Pengujian hanya boleh berjalan dalam environment testing.');
     }
+    $auditCopy = getenv('NEW_TRANSACTION_AUDIT') === '20260924-b050b725';
+    $database = $auditCopy ? 'banksampah_integrity_testing_20260924_b050b725' : 'banksampah_testing';
     config([
         'database.connections.dashboard_test' => [
-            ...config('database.connections.mysql'), 'url' => null, 'database' => 'banksampah_testing',
+            ...config('database.connections.mysql'), 'url' => null, 'database' => $database,
+            ...($auditCopy ? ['host' => '127.0.0.1', 'port' => 3306, 'unix_socket' => ''] : []),
         ],
         'database.default' => 'dashboard_test',
     ]);
     $connection = DB::connection();
     if ($connection->getDriverName() !== 'mysql'
-        || $connection->selectOne('SELECT DATABASE() AS name')->name !== 'banksampah_testing') {
+        || $connection->selectOne('SELECT DATABASE() AS name')->name !== $database
+        || ($auditCopy && $connection->selectOne('SELECT @@hostname AS host')->host !== 'DESKTOP-PDMMRQ1')) {
         throw new RuntimeException('Pengujian hanya boleh memakai MySQL banksampah_testing.');
     }
     $connection->beginTransaction();
-    app(AccountSeeder::class)->run();
+    if ($auditCopy) {
+        /** Isolate these existing empty-dashboard scenarios within the rollback-only copy. */
+        DB::table('balance_mutations')->delete();
+        DB::table('inventory_movements')->delete();
+    } else {
+        app(AccountSeeder::class)->run();
+    }
     $this->travelTo(now()->setDate(2026, 9, 24)->setTime(10, 0));
 });
 
@@ -283,9 +293,10 @@ test('halaman dashboard memerlukan login dan membagikan satu snapshot ke seluruh
     $this->mock(DashboardReportingService::class)->shouldReceive('snapshot')->once()->with('2026-09-24')->andReturn($snapshot);
 
     $this->get('/admin')->assertOk()->assertSee('Kas Tunai')->assertSee('Tabungan Nasabah')
-        ->assertSee('Nilai Persediaan')->assertSee('Rekonsiliasi seimbang')
+        ->assertSee('Nilai Persediaan')->assertSee('Rekonsiliasi perlu diperiksa')
         ->assertSee('Ringkasan saldo')->assertSee('Per 24 Sep 2026')->assertDontSee('Ringkasan keuangan')
-        ->assertSeeInOrder(['Ringkasan saldo', 'Per 24 Sep 2026', 'Rekonsiliasi seimbang'])
+        ->assertSeeInOrder(['Ringkasan saldo', 'Per 24 Sep 2026', 'Rekonsiliasi perlu diperiksa'])
+        ->assertSee('Belum ada rekening kas untuk direkonsiliasi')
         ->assertSee('Sesuai GL')->assertDontSee('Cocok dengan GL')
         ->assertSee('--cols-c4xl: repeat(2, minmax(0, 1fr));', false)
         ->assertSee('Setoran dan Penarikan')->assertSee('Penjualan dan Pembayaran Pengepul')

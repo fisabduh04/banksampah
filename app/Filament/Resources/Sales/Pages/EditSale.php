@@ -10,13 +10,23 @@ use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use RuntimeException;
 
 class EditSale extends EditRecord
 {
     protected static string $resource = SaleResource::class;
+
+    protected ?bool $hasDatabaseTransactions = true;
+
+    protected function beforeValidate(): void
+    {
+        $record = Sale::query()->whereKey($this->record->getKey())->lockForUpdate()->firstOrFail();
+        if ($record->status !== Sale::STATUS_DRAFT) {
+            throw ValidationException::withMessages(['data.status' => 'Transaksi sudah dibukukan atau dibatalkan. Perubahan tidak disimpan.']);
+        }
+    }
 
     /**
      * Judul halaman.
@@ -183,29 +193,9 @@ class EditSale extends EditRecord
             ->first();
 
         /*
-         * Nomor transaksi mengikuti tanggal transaksi.
-         */
-        $tanggal = Carbon::parse(
-            $this->record->transaction_date
-        )->format('Ymd');
-
-        $nomorPenjualan =
-            'PJ-'
-            .$tanggal
-            .'-'
-            .str_pad(
-                (string) $this->record->getKey(),
-                6,
-                '0',
-                STR_PAD_LEFT
-            );
-
-        /*
          * Draft belum memiliki HPP dan laba final.
          */
         $this->record->update([
-            'sale_number' => $nomorPenjualan,
-
             'total_weight' => $ringkasan?->total_weight ?? 0,
 
             'total_amount' => $ringkasan?->total_amount ?? 0,

@@ -139,10 +139,7 @@ class SalePaymentService
                     || ! BigDecimal::of($existing->amount)->isEqualTo($amount)
                     || $existing->payment_date->toDateString() !== $paymentDate
                     || $existing->payment_method !== $paymentMethod
-                    || (
-                        $cashAccountId !== null
-                        && $existing->cash_account_id !== $cashAccountId
-                    )
+                    || $existing->cash_account_id !== $cashAccountId
                     || $existing->reference_number !== $referenceNumber
                     || $existing->notes !== $notes
                     || $existing->received_by !== $userId

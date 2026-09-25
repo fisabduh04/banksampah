@@ -38,6 +38,7 @@ class DashboardReportingService
                 'label' => $label, 'balance' => $cash['groups'][$type]['cash_balance'],
                 'gl_balance' => $cash['groups'][$type]['gl_balance'],
                 'difference' => $cash['groups'][$type]['difference'], 'balanced' => $cash['groups'][$type]['balanced'],
+                'has_accounts' => count($cash['groups'][$type]['cash_accounts']) > 0,
             ];
         }
         foreach (['savings' => ['Tabungan Nasabah', $savings, 'customer_balance'],
@@ -104,7 +105,8 @@ class DashboardReportingService
 
         return [
             'as_of_date' => $asOfDate, 'start_date' => $start->toDateString(), 'cards' => $cards,
-            'balanced' => $cash['balanced'] && $savings['balanced'] && $inventory['balanced'] && $trialBalance['balanced'],
+            'balanced' => ($cards['cash']['has_accounts'] || $cards['bank']['has_accounts'])
+                && $cash['balanced'] && $savings['balanced'] && $inventory['balanced'] && $trialBalance['balanced'],
             'trial_balance_balanced' => $trialBalance['balanced'],
             'months' => $months, 'labels' => $labels, 'series' => $series, 'activity' => $activity,
         ];

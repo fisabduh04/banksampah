@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Account;
 use App\Models\BalanceMutation;
 use App\Models\CashAccount;
+use App\Models\CashMutation;
 use App\Models\Customer;
 use App\Models\JournalEntry;
 use App\Models\Withdrawal;
@@ -74,6 +75,8 @@ class WithdrawalService
                     ->where('reference_type', 'withdrawal')
                     ->where('reference_id', $withdrawal->id)
                     ->exists()
+                || CashMutation::query()->where('reference_type', 'withdrawal')->where('reference_id', $withdrawal->id)->exists()
+                || JournalEntry::query()->where('reference_type', 'withdrawal')->where('reference_id', $withdrawal->id)->exists()
             ) {
                 throw new Exception(
                     'Mutasi penarikan ini sudah pernah dibuat.'
@@ -228,11 +231,11 @@ class WithdrawalService
              * Diletakkan terakhir agar semua ledger
              * sudah berhasil sebelum status menjadi posted.
              */
-            $withdrawal->update([
+            $withdrawal->forceFill([
                 'status' => 'posted',
                 'posted_at' => now(),
                 'posted_by' => $userId,
-            ]);
+            ])->save();
         }, attempts: 3);
 
         $withdrawal->refresh();
@@ -384,12 +387,12 @@ class WithdrawalService
             /**
              * Finalisasi pembatalan.
              */
-            $withdrawal->update([
+            $withdrawal->forceFill([
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
                 'cancelled_by' => $userId,
                 'cancellation_reason' => $reason,
-            ]);
+            ])->save();
         }, attempts: 3);
 
         $withdrawal->refresh();

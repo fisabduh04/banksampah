@@ -37,6 +37,9 @@ class FinancialOverview extends StatsOverviewWidget
             $warning = 'Neraca Saldo tidak seimbang. Periksa jurnal melalui menu Laporan > Neraca Saldo.';
         } elseif (! $isBalanced) {
             $warning = 'Ada saldo yang berbeda dengan Buku Besar. Periksa nominal selisih pada kartu.';
+            if (collect($this->snapshot['cards'] ?? [])->every(fn (array $card): bool => $card['balanced'])) {
+                $warning = 'Belum ada rekening kas untuk direkonsiliasi';
+            }
         }
 
         return parent::getSectionContentComponent()
@@ -53,6 +56,9 @@ class FinancialOverview extends StatsOverviewWidget
                     Text::make($warning)->size(TextSize::Small)->color('danger'),
                 ]),
                 Text::make('Tabungan adalah kewajiban; persediaan dinilai pada biaya.')
+                    ->size(TextSize::ExtraSmall)
+                    ->color('gray'),
+                Text::make('Kecocokan dengan GL bukan pengesahan saldo historis.')
                     ->size(TextSize::ExtraSmall)
                     ->color('gray'),
             ]);
@@ -76,14 +82,19 @@ class FinancialOverview extends StatsOverviewWidget
         $stats = [];
         foreach ($this->snapshot['cards'] ?? [] as $key => $card) {
             $balance = view('filament.financial-amount', ['amount' => $card['balance']]);
+            $hasAccounts = $card['has_accounts'] ?? true;
+            $isBalanced = $hasAccounts && $card['balanced'];
+            $description = $hasAccounts
+                ? ($card['balanced'] ? 'Sesuai GL' : view('filament.dashboard-difference', ['amount' => $card['difference']]))
+                : view('filament.dashboard-no-cash-accounts', ['card' => $card, 'type' => $key]);
 
             $stats[] = Stat::make($card['label'], $balance)
                 ->extraAttributes([
-                    'class' => 'bank-sampah-balance-stat'.($card['balanced'] ? ' bank-sampah-balance-stat-balanced' : ''),
+                    'class' => 'bank-sampah-balance-stat'.($isBalanced ? ' bank-sampah-balance-stat-balanced' : ''),
                 ])
-                ->description($card['balanced'] ? 'Sesuai GL' : view('filament.dashboard-difference', ['amount' => $card['difference']]))
-                ->descriptionIcon($card['balanced'] ? 'heroicon-m-check-circle' : 'heroicon-m-exclamation-triangle')
-                ->color($card['balanced'] ? 'success' : 'danger')
+                ->description($description)
+                ->descriptionIcon($isBalanced ? 'heroicon-m-check-circle' : 'heroicon-m-exclamation-triangle')
+                ->color($isBalanced ? 'success' : ($card['balanced'] ? 'warning' : 'danger'))
                 ->icon(match ($key) {
                     'cash' => 'heroicon-o-banknotes', 'bank' => 'heroicon-o-building-library',
                     'savings' => 'heroicon-o-users', default => 'heroicon-o-cube',

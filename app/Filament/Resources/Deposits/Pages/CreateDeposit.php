@@ -2,34 +2,23 @@
 
 namespace App\Filament\Resources\Deposits\Pages;
 
+use App\Filament\CreatesFinancialDocument;
 use App\Filament\Resources\Deposits\DepositResource;
 use App\Models\Customer;
-use App\Models\Deposit;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Contracts\View\View;
 
 class CreateDeposit extends CreateRecord
 {
+    use CreatesFinancialDocument;
+
     protected static string $resource = DepositResource::class;
+
+    protected ?bool $hasDatabaseTransactions = true;
 
     protected function mutateFormDataBeforeCreate(array $data): array
     {
-        $year = now()->year;
-
-        $lastDeposit = Deposit::query()
-            ->whereYear('created_at', $year)
-            ->latest('id')
-            ->first();
-
-        $nextNumber = $lastDeposit
-            ? ((int) substr($lastDeposit->deposit_number, -6)) + 1
-            : 1;
-
-        $data['deposit_number'] = sprintf(
-            'ST-%s-%06d',
-            $year,
-            $nextNumber
-        );
+        $data['status'] = 'draft';
 
         return $data;
     }

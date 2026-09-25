@@ -13,6 +13,7 @@ Read the rules that match the files or feature area you are working on.
 | `architecture.md` | `app/**`, `routes/**`, `resources/views/**` |
 | `database.md` | `database/**`, `app/Models/**` |
 | `financial-integrity.md` | deposits, withdrawals, balances, accounting, payment-related code |
+| `services.md` | `app/Services/**`; historical corrections and trial data |
 | `inventory.md` | waste stock, waste sales, stock adjustments, inventory reports |
 | `filament-ui.md` | `app/Filament/**`, Livewire/Filament UI-related code |
 | `attachments.md` | uploads, transaction evidence, receipts, supporting documents |

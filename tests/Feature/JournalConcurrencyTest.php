@@ -93,6 +93,10 @@ if (
     );
 }
 
+if (Illuminate\Support\Facades\DB::connection()->selectOne('SELECT DATABASE() AS db, @@hostname AS server')->db !== getenv('DB_DATABASE') || Illuminate\Support\Facades\DB::connection()->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+    throw new RuntimeException('Worker menolak identitas database/server yang berbeda.');
+}
+
 /**
  * Tandai worker sudah siap.
  */
@@ -172,6 +176,7 @@ PHP;
                 ],
                 base_path(),
                 [
+                    'DB_HOST' => '127.0.0.1', 'DB_PORT' => '3306', 'DB_SOCKET' => '',
                     'APP_ENV' => 'testing',
                     'DB_CONNECTION' => 'mysql',
                     'DB_DATABASE' => $database,
@@ -451,7 +456,7 @@ test(
 
         $connection = [
             ...config('database.connections.mysql'),
-            'url' => null,
+            'url' => null, 'host' => '127.0.0.1', 'port' => 3306, 'unix_socket' => '',
         ];
 
         config([
@@ -461,9 +466,13 @@ test(
             ],
         ]);
 
+        if (! preg_match('/^banksampah_(?:journal|finance)_test_[a-f0-9]{12}$/', $database) || DB::connection('journal_admin')->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+            throw new RuntimeException('Server/nama database disposable tidak sesuai.');
+        }
         DB::connection('journal_admin')->statement(
             'CREATE DATABASE `'.$database.'`'
         );
+        $databaseCreatedByThisTest = true;
 
         try {
             config([
@@ -485,6 +494,9 @@ test(
                 );
             }
 
+            if (! $databaseCreatedByThisTest || DB::connection()->selectOne('SELECT DATABASE() AS db, @@hostname AS server')->db !== $database || DB::connection()->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+                throw new RuntimeException('Migrasi menolak target di luar database disposable milik proses ini.');
+            }
             Artisan::call('migrate', [
                 '--database' => 'journal_race',
                 '--force' => true,
@@ -615,6 +627,9 @@ test(
                 );
             }
 
+            if (! $databaseCreatedByThisTest || DB::connection('journal_admin')->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+                throw new RuntimeException('Database bukan milik proses pengujian ini.');
+            }
             DB::connection('journal_admin')->statement(
                 'DROP DATABASE `'.$database.'`'
             );
@@ -651,7 +666,7 @@ test(
 
         $connection = [
             ...config('database.connections.mysql'),
-            'url' => null,
+            'url' => null, 'host' => '127.0.0.1', 'port' => 3306, 'unix_socket' => '',
         ];
 
         config([
@@ -661,9 +676,13 @@ test(
             ],
         ]);
 
+        if (! preg_match('/^banksampah_(?:journal|finance)_test_[a-f0-9]{12}$/', $database) || DB::connection('journal_admin')->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+            throw new RuntimeException('Server/nama database disposable tidak sesuai.');
+        }
         DB::connection('journal_admin')->statement(
             'CREATE DATABASE `'.$database.'`'
         );
+        $databaseCreatedByThisTest = true;
 
         try {
             config([
@@ -674,6 +693,9 @@ test(
                 'database.default' => 'journal_race',
             ]);
 
+            if (! $databaseCreatedByThisTest || DB::connection()->selectOne('SELECT DATABASE() AS db, @@hostname AS server')->db !== $database || DB::connection()->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+                throw new RuntimeException('Migrasi menolak target di luar database disposable milik proses ini.');
+            }
             Artisan::call('migrate', [
                 '--database' => 'journal_race',
                 '--force' => true,
@@ -810,6 +832,9 @@ test(
                 );
             }
 
+            if (! $databaseCreatedByThisTest || DB::connection('journal_admin')->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+                throw new RuntimeException('Database bukan milik proses pengujian ini.');
+            }
             DB::connection('journal_admin')->statement(
                 'DROP DATABASE `'.$database.'`'
             );
@@ -846,7 +871,7 @@ test(
 
         $connection = [
             ...config('database.connections.mysql'),
-            'url' => null,
+            'url' => null, 'host' => '127.0.0.1', 'port' => 3306, 'unix_socket' => '',
         ];
 
         config([
@@ -856,9 +881,13 @@ test(
             ],
         ]);
 
+        if (! preg_match('/^banksampah_(?:journal|finance)_test_[a-f0-9]{12}$/', $database) || DB::connection('journal_admin')->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+            throw new RuntimeException('Server/nama database disposable tidak sesuai.');
+        }
         DB::connection('journal_admin')->statement(
             'CREATE DATABASE `'.$database.'`'
         );
+        $databaseCreatedByThisTest = true;
 
         try {
             config([
@@ -869,6 +898,9 @@ test(
                 'database.default' => 'journal_race',
             ]);
 
+            if (! $databaseCreatedByThisTest || DB::connection()->selectOne('SELECT DATABASE() AS db, @@hostname AS server')->db !== $database || DB::connection()->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+                throw new RuntimeException('Migrasi menolak target di luar database disposable milik proses ini.');
+            }
             Artisan::call('migrate', [
                 '--database' => 'journal_race',
                 '--force' => true,
@@ -1018,6 +1050,9 @@ test(
                 );
             }
 
+            if (! $databaseCreatedByThisTest || DB::connection('journal_admin')->selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+                throw new RuntimeException('Database bukan milik proses pengujian ini.');
+            }
             DB::connection('journal_admin')->statement(
                 'DROP DATABASE `'.$database.'`'
             );

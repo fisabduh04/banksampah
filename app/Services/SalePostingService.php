@@ -114,7 +114,7 @@ class SalePostingService
                 ->where('reference_id', $lockedSale->id)
                 ->exists();
 
-            if ($existingMovement) {
+            if ($existingMovement || JournalEntry::query()->where('reference_type', 'sale')->where('reference_id', $lockedSale->id)->exists()) {
                 throw new RuntimeException(
                     'Mutasi persediaan transaksi ini sudah pernah dibuat.'
                 );

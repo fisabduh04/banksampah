@@ -28,6 +28,12 @@ class DepositService
                 );
             }
 
+            if (BalanceMutation::query()->where('reference_type', 'deposit')->where('reference_id', $deposit->id)->exists()
+                || InventoryMovement::query()->where('reference_type', 'deposit')->where('reference_id', $deposit->id)->exists()
+                || JournalEntry::query()->where('reference_type', 'deposit')->where('reference_id', $deposit->id)->exists()) {
+                throw new Exception('Draft setoran sudah memiliki pencatatan keuangan. Periksa histori tanpa memposting ulang.');
+            }
+
             if ($deposit->items->isEmpty()) {
                 throw new Exception(
                     'Transaksi belum memiliki detail bahan.'
@@ -97,11 +103,11 @@ class DepositService
                 }
             }
 
-            $deposit->update([
+            $deposit->forceFill([
                 'status' => 'posted',
                 'posted_at' => now(),
                 'posted_by' => $userId,
-            ]);
+            ])->save();
 
             BalanceMutation::create([
                 'customer_id' => $deposit->customer_id,
@@ -316,7 +322,12 @@ class DepositService
                     userId: $userId
                 );
             }
-            $record->update(['status' => 'cancelled']);
+            $record->forceFill([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancelled_by' => $userId,
+                'cancellation_reason' => $reason,
+            ])->save();
         }, attempts: 3);
         $deposit->refresh();
     }
