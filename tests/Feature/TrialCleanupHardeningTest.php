@@ -4,6 +4,7 @@ use App\Services\TrialBackupRestorer;
 use App\Services\TrialCleanupReport;
 use App\Services\TrialCleanupService;
 use Illuminate\Database\Connection;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -89,7 +90,7 @@ test('preflight and verify use a nonlocking read-only transaction and preserve t
     });
     $this->artisan('bank-sampah:trial-cleanup', [...$options, '--preflight' => true])->expectsOutputToContain('"state":"not_cleaned"')->assertExitCode(0);
     $this->artisan('bank-sampah:trial-cleanup', [...$options, '--verify' => true])->expectsOutputToContain('"state":"not_cleaned"')->assertExitCode(0);
-    expect($queries)->toContain('SET TRANSACTION READ ONLY');
+    expect($queries)->toContain('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
     expect(is_file($options['--report']))->toBeFalse();
     expect(app(TrialCleanupService::class)->snapshot($db, $manifest['schema']))->toBe($manifest['tables']);
     expect((int) $db->selectOne("SELECT COUNT(*) AS n FROM information_schema.table_constraints WHERE constraint_schema=DATABASE() AND constraint_type='FOREIGN KEY'")->n)->toBe(42);
@@ -236,10 +237,22 @@ test('injected DELETE failure rolls back and verify reports the untouched snapsh
 
 test('MariaDB server metadata uses the legacy isolation variable when the MySQL variable is unavailable', function (): void {
     $connection = Mockery::mock(Connection::class);
+    $unknownVariable = new PDOException('Unknown system variable');
+    $unknownVariable->errorInfo = ['HY000', 1193, 'Unknown system variable'];
     $connection->shouldReceive('selectOne')->once()->with('SELECT VERSION() AS version')->andReturn((object) ['version' => '11.8.9-MariaDB-log']);
-    $connection->shouldReceive('selectOne')->once()->with('SELECT @@transaction_isolation AS level')->andThrow(new RuntimeException('Unknown system variable'));
+    $connection->shouldReceive('selectOne')->once()->with('SELECT @@transaction_isolation AS level')->andThrow(new QueryException('mariadb', 'SELECT @@transaction_isolation AS level', [], $unknownVariable));
     $connection->shouldReceive('selectOne')->once()->with('SELECT @@tx_isolation AS level')->andReturn((object) ['level' => 'REPEATABLE-READ']);
     expect(app(TrialCleanupService::class)->serverInfo($connection))->toBe(['version' => '11.8.9-MariaDB-log', 'engine' => 'MariaDB', 'isolation' => 'REPEATABLE-READ']);
+});
+
+test('MariaDB isolation lookup does not hide permission or connection failures behind the legacy variable', function (): void {
+    $connection = Mockery::mock(Connection::class);
+    $denied = new PDOException('SELECT denied');
+    $denied->errorInfo = ['42000', 1142, 'SELECT denied'];
+    $connection->shouldReceive('selectOne')->once()->with('SELECT VERSION() AS version')->andReturn((object) ['version' => '11.8.9-MariaDB-log']);
+    $connection->shouldReceive('selectOne')->once()->with('SELECT @@transaction_isolation AS level')->andThrow(new QueryException('mariadb', 'SELECT @@transaction_isolation AS level', [], $denied));
+
+    expect(fn () => app(TrialCleanupService::class)->serverInfo($connection))->toThrow(QueryException::class, 'SELECT denied');
 });
 
 test('unsupported server versions cannot pass preflight', function (string $version): void {

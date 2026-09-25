@@ -1,5 +1,6 @@
 <?php
 
+use App\Services\TrialBackupRestorer;
 use App\Services\TrialCleanupService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -7,36 +8,43 @@ use Tests\TestCase;
 uses(TestCase::class);
 
 beforeEach(function (): void {
+    $this->ownedCleanupDatabase = null;
     if (getenv('TRIAL_CLEANUP_LATEST') !== '82e828f0') {
         $this->markTestSkipped('Requires the latest full production backup restored to a dedicated local test copy.');
     }
     if (! app()->environment('testing')) {
         throw new RuntimeException('Testing environment required.');
     }
-    config(['database.connections.latest_cleanup_test' => [...config('database.connections.mysql'), 'url' => null, 'host' => '127.0.0.1', 'port' => 3306, 'unix_socket' => '', 'database' => 'banksampah_cleanup_testing_latest_tests'], 'database.default' => 'latest_cleanup_test']);
+    $database = 'banksampah_cleanup_testing_latest_'.bin2hex(random_bytes(6));
+    app(TrialBackupRestorer::class)->restore(base_path('u846702626_banksampah (1).sql'), '82e828f0212e987fee214c729bf250d0ca0e307c2911bd2d34d270f0e4787e9f', $database, 'DESKTOP-PDMMRQ1');
+    $this->ownedCleanupDatabase = $database;
+    config(['database.connections.latest_cleanup_test' => [...config('database.connections.mysql'), 'url' => null, 'host' => '127.0.0.1', 'port' => 3306, 'unix_socket' => '', 'database' => $database], 'database.default' => 'latest_cleanup_test']);
     DB::purge('latest_cleanup_test');
     $this->cleanup = app(TrialCleanupService::class);
-    expect($this->cleanup->identity(DB::connection()))->toBe(['database' => 'banksampah_cleanup_testing_latest_tests', 'server' => 'DESKTOP-PDMMRQ1']);
+    expect($this->cleanup->identity(DB::connection()))->toBe(['database' => $database, 'server' => 'DESKTOP-PDMMRQ1']);
     $this->manifest = json_decode(file_get_contents(storage_path('app/private/trial-cleanup-latest-tests-manifest.json')), true, flags: JSON_THROW_ON_ERROR);
     $this->cleanup->verifyBackup(base_path('u846702626_banksampah (1).sql'), $this->manifest['source_sha256']);
     DB::statement("SET time_zone = '+00:00'");
     $this->before = $this->cleanup->snapshot(DB::connection(), $this->manifest['schema']);
-    DB::beginTransaction();
 });
 
 afterEach(function (): void {
-    if (config('database.default') === 'latest_cleanup_test') {
+    if ($this->ownedCleanupDatabase !== null) {
         while (DB::transactionLevel() > 0) {
             DB::rollBack();
         }
-        expect($this->cleanup->snapshot(DB::connection(), $this->manifest['schema']))->toBe($this->before);
+        if (! app()->environment('testing') || ! preg_match('/\Abanksampah_cleanup_testing_latest_[a-f0-9]{12}\z/', $this->ownedCleanupDatabase)
+            || DB::selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+            throw new RuntimeException('Refusing to drop an unowned test database.');
+        }
+        DB::statement('DROP DATABASE `'.$this->ownedCleanupDatabase.'`');
         DB::purge('latest_cleanup_test');
     }
 });
 
 function cleanLatestTrialCopy(array $manifest, bool $commit = false): array
 {
-    return app(TrialCleanupService::class)->clean(DB::connection(), $manifest, 'banksampah_cleanup_testing_latest_tests', 'DESKTOP-PDMMRQ1', $commit);
+    return app(TrialCleanupService::class)->clean(DB::connection(), $manifest, DB::connection()->getDatabaseName(), 'DESKTOP-PDMMRQ1', $commit);
 }
 
 test('latest full backup cleanup includes new deposits and journals while preserving all master and system data', function (): void {

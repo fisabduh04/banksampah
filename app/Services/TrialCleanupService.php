@@ -5,6 +5,7 @@ namespace App\Services;
 use Brick\Math\BigDecimal;
 use Closure;
 use Illuminate\Database\Connection;
+use Illuminate\Database\QueryException;
 use RuntimeException;
 use Throwable;
 
@@ -29,9 +30,7 @@ class TrialCleanupService
         if ($confirmedLatest && $backupHash === self::OBSOLETE_BACKUP) {
             throw new RuntimeException('Snapshot 24 September 14.05 diketahui usang; bukan backup terbaru.');
         }
-        $db->statement("SET time_zone = '+00:00'");
-        $db->statement('SET TRANSACTION READ ONLY');
-        $db->beginTransaction();
+        $this->beginIsolatedTransaction($db, readOnly: true);
         try {
             $schema = $this->schema($db);
             $snapshot = $this->snapshot($db, $schema);
@@ -94,7 +93,7 @@ class TrialCleanupService
             if ((int) $crossSchema->n !== 0) {
                 throw new RuntimeException('Foreign key lintas database harus direview.');
             }
-            $result[$table->name] = $this->normalize(['columns' => $columns, 'indexes' => $indexes, 'foreign_keys' => $foreignKeys]);
+            $result[$table->name] = $this->normalize(['engine' => $table->engine, 'columns' => $columns, 'indexes' => $indexes, 'foreign_keys' => $foreignKeys]);
         }
         foreach (['triggers' => 'TRIGGER_SCHEMA', 'routines' => 'ROUTINE_SCHEMA', 'events' => 'EVENT_SCHEMA'] as $table => $column) {
             if ((int) $db->selectOne('SELECT COUNT(*) AS n FROM information_schema.'.$table.' WHERE '.$column.' = DATABASE()')->n !== 0) {
@@ -123,7 +122,91 @@ class TrialCleanupService
         }, $columns);
     }
 
-    /** @return array{version: string, engine: string, isolation: string} */
+    /**
+     * Compare every metadata field; format-1 manifests without an engine were
+     * produced by schema(), which already rejected every non-InnoDB table.
+     *
+     * @return list<array{path: string, expected: mixed, actual: mixed}>
+     */
+    public function schemaDifferences(array $actual, array $expected): array
+    {
+        foreach ($expected as $table => &$definition) {
+            if (! array_key_exists('engine', $definition)) {
+                $definition['engine'] = 'InnoDB';
+            }
+            if (($actual[$table]['engine'] ?? null) === 'InnoDB' && $definition['engine'] === 'InnoDB') {
+                foreach (['delete_rule', 'update_rule'] as $rule) {
+                    foreach ($definition['foreign_keys'] as &$key) {
+                        if ($key[$rule] === 'NO ACTION') {
+                            $key[$rule] = 'RESTRICT';
+                        }
+                    }
+                    unset($key);
+                    foreach ($actual[$table]['foreign_keys'] as &$key) {
+                        if ($key[$rule] === 'NO ACTION') {
+                            $key[$rule] = 'RESTRICT';
+                        }
+                    }
+                    unset($key);
+                }
+            }
+            if ($table === 'failed_jobs') {
+                foreach ($definition['columns'] as $position => &$column) {
+                    $other = $actual[$table]['columns'][$position] ?? [];
+                    if ($this->equivalentFailedAt($column, $other)) {
+                        $column['default_value'] = $actual[$table]['columns'][$position]['default_value'] = 'CURRENT_TIMESTAMP';
+                        $column['extra'] = $actual[$table]['columns'][$position]['extra'] = '';
+                    }
+                }
+                unset($column);
+            }
+        }
+        unset($definition);
+
+        return $this->metadataDifferences($actual, $expected);
+    }
+
+    /** Only the default expression and its MySQL metadata marker may differ. */
+    private function equivalentFailedAt(array $expected, array $actual): bool
+    {
+        foreach ([$expected, $actual] as $column) {
+            if (($column['name'] ?? null) !== 'failed_at'
+                || ($column['type'] ?? null) !== 'timestamp'
+                || ($column['full_type'] ?? null) !== 'timestamp'
+                || ($column['datetime_precision'] ?? null) !== '0'
+                || ($column['generation_expression'] ?? null) !== ''
+                || ! is_string($column['default_value'] ?? null)
+                || ! preg_match('/\ACURRENT_TIMESTAMP(?:\(\))?\z/i', $column['default_value'])
+                || ! in_array($column['extra'] ?? null, ['', 'DEFAULT_GENERATED'], true)) {
+                return false;
+            }
+        }
+        unset($expected['default_value'], $expected['extra'], $actual['default_value'], $actual['extra']);
+
+        return $expected === $actual;
+    }
+
+    /** @return list<array{path: string, expected: mixed, actual: mixed}> */
+    private function metadataDifferences(array $actual, array $expected, string $prefix = ''): array
+    {
+        $differences = [];
+        foreach (array_unique([...array_keys($expected), ...array_keys($actual)]) as $key) {
+            $path = $prefix === '' ? (string) $key : $prefix.'.'.$key;
+            if (! array_key_exists($key, $actual) || ! array_key_exists($key, $expected)) {
+                $differences[] = ['path' => $path, 'expected' => $expected[$key] ?? null, 'actual' => $actual[$key] ?? null];
+            } elseif (is_array($actual[$key]) && is_array($expected[$key])) {
+                array_push($differences, ...$this->metadataDifferences($actual[$key], $expected[$key], $path));
+            } elseif ($actual[$key] !== $expected[$key]) {
+                $differences[] = ['path' => $path, 'expected' => $expected[$key], 'actual' => $actual[$key]];
+            }
+        }
+
+        return $differences;
+    }
+
+    /** Session defaults are diagnostic only, not the active transaction isolation.
+     * @return array{version: string, engine: string, isolation: string}
+     */
     public function serverInfo(Connection $db): array
     {
         $version = (string) $db->selectOne('SELECT VERSION() AS version')->version;
@@ -134,11 +217,36 @@ class TrialCleanupService
         }
         try {
             $isolation = $db->selectOne('SELECT @@transaction_isolation AS level')->level;
-        } catch (Throwable) {
+        } catch (QueryException $exception) {
+            if ((int) ($exception->errorInfo[1] ?? 0) !== 1193) {
+                throw $exception;
+            }
             $isolation = $db->selectOne('SELECT @@tx_isolation AS level')->level;
         }
 
         return ['version' => $version, 'engine' => $maria ? 'MariaDB' : 'MySQL', 'isolation' => strtoupper($isolation)];
+    }
+
+    /**
+     * SET TRANSACTION applies to the immediately following transaction only.
+     * A savepoint cannot establish isolation for an existing outer transaction.
+     *
+     * @return array{version: string, engine: string, isolation: string, session_isolation: string, access_mode: string}
+     */
+    private function beginIsolatedTransaction(Connection $db, bool $readOnly): array
+    {
+        if ($db->transactionLevel() !== 0 || $db->getPdo()->inTransaction()) {
+            throw new RuntimeException('Operasi harus memakai koneksi tanpa transaksi aktif.');
+        }
+        $server = $this->serverInfo($db);
+        $db->statement("SET time_zone = '+00:00'");
+        $access = $readOnly ? 'READ ONLY' : 'READ WRITE';
+        if (! $db->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, '.$access)) {
+            throw new RuntimeException('Tidak dapat menetapkan isolasi transaksi REPEATABLE READ.');
+        }
+        $db->beginTransaction();
+
+        return [...$server, 'session_isolation' => $server['isolation'], 'isolation' => 'REPEATABLE-READ', 'access_mode' => $access];
     }
 
     /** @return array<string, mixed> */
@@ -182,16 +290,13 @@ class TrialCleanupService
             throw new RuntimeException('Database sumber manifest tidak cocok.');
         }
         $afterExpected = $this->expectedAfter($manifest);
-        $server = $this->serverInfo($db);
-        $db->statement("SET time_zone = '+00:00'");
-        $db->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-        $db->statement('SET TRANSACTION READ ONLY');
-        $db->beginTransaction();
+        $server = $this->beginIsolatedTransaction($db, readOnly: true);
         try {
             $schema = $this->schema($db);
             $actual = $this->snapshot($db, $schema);
             $reasons = $this->classificationBlockers($db, $schema);
-            if ($schema !== $manifest['schema']) {
+            $schemaDifferences = $this->schemaDifferences($schema, $manifest['schema']);
+            if ($schemaDifferences !== []) {
                 $reasons[] = 'Skema/foreign key berbeda dari manifest.';
             }
             $state = $actual === $manifest['tables'] ? 'not_cleaned' : ($actual === $afterExpected ? 'already_clean' : 'mismatch');
@@ -212,7 +317,7 @@ class TrialCleanupService
 
             return ['state' => $state, 'identity' => $identity, 'server' => $server, 'foreign_key_checks' => 1,
                 'innodb_tables' => count($schema), 'schema_sha256' => hash('sha256', json_encode($schema, JSON_THROW_ON_ERROR)),
-                'execution_ready' => $state !== 'mismatch' && $productionReady && in_array($server['isolation'], ['REPEATABLE-READ', 'SERIALIZABLE'], true), 'reasons' => $reasons, 'tables' => $actual, 'totals' => $totals];
+                'execution_ready' => $state !== 'mismatch' && $productionReady, 'reasons' => $reasons, 'schema_differences' => $schemaDifferences, 'tables' => $actual, 'totals' => $totals];
         } finally {
             $db->rollBack();
         }
@@ -350,21 +455,12 @@ class TrialCleanupService
         if (($manifest['format'] ?? null) !== 1 || ($manifest['blockers'] ?? ['manifest incomplete']) !== [] || ($manifest['foreign_key_orphans'] ?? ['manifest incomplete']) !== []) {
             throw new RuntimeException('Manifest belum lengkap atau masih memiliki penghalang klasifikasi/FK.');
         }
-        $db->statement("SET time_zone = '+00:00'");
-        try {
-            $isolation = $db->selectOne('SELECT @@transaction_isolation AS level')->level;
-        } catch (Throwable) {
-            $isolation = $db->selectOne('SELECT @@tx_isolation AS level')->level;
-        }
-        if (! in_array(strtoupper($isolation), ['REPEATABLE-READ', 'SERIALIZABLE'], true)) {
-            throw new RuntimeException('Isolasi transaksi harus REPEATABLE-READ atau SERIALIZABLE untuk mengunci rentang ID.');
-        }
-        $level = $db->transactionLevel();
-        $db->beginTransaction();
+        $server = $this->beginIsolatedTransaction($db, readOnly: false);
         try {
             $schema = $this->schema($db);
-            if ($schema !== $manifest['schema']) {
-                throw new RuntimeException('Skema/foreign key berbeda dari manifest.');
+            $schemaDifferences = $this->schemaDifferences($schema, $manifest['schema']);
+            if ($schemaDifferences !== []) {
+                throw new RuntimeException('Skema/foreign key berbeda dari manifest: '.json_encode($schemaDifferences, JSON_THROW_ON_ERROR));
             }
             $before = $this->snapshot($db, $schema, lock: true);
             $expected = $manifest['tables'];
@@ -417,7 +513,7 @@ class TrialCleanupService
                     throw new RuntimeException('Saldo uji masih tersisa.');
                 }
             }
-            $report = ['status' => $alreadyClean ? 'already_clean_noop' : ($commit ? 'committed' : 'simulated_rolled_back'), 'identity' => $this->identity($db), 'deleted' => $deleted, 'before' => $before, 'after' => $after, 'totals_before' => $totalsBefore, 'totals_after' => $totalsAfter, 'master_fingerprints_identical' => array_intersect_key($before, array_flip(self::MASTERS)) === array_intersect_key($after, array_flip(self::MASTERS)), 'all_preserved_tables_identical' => array_diff_key($before, array_flip(self::TRANSACTIONS)) === array_diff_key($after, array_flip(self::TRANSACTIONS)), 'foreign_key_orphans_after' => [], 'reference_findings_after' => []];
+            $report = ['status' => $alreadyClean ? 'already_clean_noop' : ($commit ? 'committed' : 'simulated_rolled_back'), 'identity' => $this->identity($db), 'server' => $server, 'deleted' => $deleted, 'before' => $before, 'after' => $after, 'totals_before' => $totalsBefore, 'totals_after' => $totalsAfter, 'master_fingerprints_identical' => array_intersect_key($before, array_flip(self::MASTERS)) === array_intersect_key($after, array_flip(self::MASTERS)), 'all_preserved_tables_identical' => array_diff_key($before, array_flip(self::TRANSACTIONS)) === array_diff_key($after, array_flip(self::TRANSACTIONS)), 'foreign_key_orphans_after' => [], 'reference_findings_after' => []];
             if ($commit) {
                 $beforeCommit?->__invoke();
                 $db->commit();
@@ -427,7 +523,7 @@ class TrialCleanupService
 
             return $report;
         } catch (Throwable $exception) {
-            while ($db->transactionLevel() > $level) {
+            while ($db->transactionLevel() > 0) {
                 $db->rollBack();
             }
             throw $exception;

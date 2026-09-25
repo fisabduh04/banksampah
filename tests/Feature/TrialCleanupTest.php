@@ -8,35 +8,42 @@ use Tests\TestCase;
 uses(TestCase::class);
 
 beforeEach(function (): void {
+    $this->ownedCleanupDatabase = null;
     if (getenv('TRIAL_CLEANUP_AUDIT') !== 'old-b050b725') {
         $this->markTestSkipped('Requires the isolated full-schema old snapshot; never the main database.');
     }
     if (! app()->environment('testing')) {
         throw new RuntimeException('Testing environment required.');
     }
-    config(['database.connections.trial_cleanup_test' => [...config('database.connections.mysql'), 'url' => null, 'host' => '127.0.0.1', 'port' => 3306, 'unix_socket' => '', 'database' => 'banksampah_cleanup_testing_old_full'], 'database.default' => 'trial_cleanup_test']);
+    $database = 'banksampah_cleanup_testing_old_'.bin2hex(random_bytes(6));
+    app(TrialBackupRestorer::class)->restore('C:/Users/Lenovo/Downloads/u846702626_banksampah.sql', TrialCleanupService::OBSOLETE_BACKUP, $database, 'DESKTOP-PDMMRQ1');
+    $this->ownedCleanupDatabase = $database;
+    config(['database.connections.trial_cleanup_test' => [...config('database.connections.mysql'), 'url' => null, 'host' => '127.0.0.1', 'port' => 3306, 'unix_socket' => '', 'database' => $database], 'database.default' => 'trial_cleanup_test']);
     DB::purge('trial_cleanup_test');
     $this->cleanup = app(TrialCleanupService::class);
-    expect($this->cleanup->identity(DB::connection()))->toBe(['database' => 'banksampah_cleanup_testing_old_full', 'server' => 'DESKTOP-PDMMRQ1']);
+    expect($this->cleanup->identity(DB::connection()))->toBe(['database' => $database, 'server' => 'DESKTOP-PDMMRQ1']);
     DB::statement("SET time_zone = '+00:00'");
     $this->manifest = json_decode(file_get_contents(storage_path('app/private/trial-cleanup-old-full-manifest.json')), true, flags: JSON_THROW_ON_ERROR);
     $this->baseline = $this->cleanup->snapshot(DB::connection(), $this->manifest['schema']);
-    DB::beginTransaction();
 });
 
 afterEach(function (): void {
-    if (config('database.default') === 'trial_cleanup_test') {
+    if ($this->ownedCleanupDatabase !== null) {
         while (DB::transactionLevel() > 0) {
             DB::rollBack();
         }
-        expect($this->cleanup->snapshot(DB::connection(), $this->manifest['schema']))->toBe($this->baseline);
+        if (! app()->environment('testing') || ! preg_match('/\Abanksampah_cleanup_testing_old_[a-f0-9]{12}\z/', $this->ownedCleanupDatabase)
+            || DB::selectOne('SELECT @@hostname AS server')->server !== 'DESKTOP-PDMMRQ1') {
+            throw new RuntimeException('Refusing to drop an unowned test database.');
+        }
+        DB::statement('DROP DATABASE `'.$this->ownedCleanupDatabase.'`');
         DB::purge('trial_cleanup_test');
     }
 });
 
 function runTrialCleanup(array $manifest, bool $commit = false): array
 {
-    return app(TrialCleanupService::class)->clean(DB::connection(), $manifest, 'banksampah_cleanup_testing_old_full', 'DESKTOP-PDMMRQ1', $commit);
+    return app(TrialCleanupService::class)->clean(DB::connection(), $manifest, DB::connection()->getDatabaseName(), 'DESKTOP-PDMMRQ1', $commit);
 }
 
 test('full-schema dry run removes exactly the trial IDs and returns every master byte unchanged before rollback', function (): void {
@@ -132,8 +139,6 @@ test('unclassified tables schema drift and the wrong database all block cleanup'
 })->with(['schema', 'unclassified', 'database']);
 
 test('obsolete backup cannot be promoted to the latest production source', function (): void {
-    DB::rollBack();
-
     expect(fn () => $this->cleanup->manifest(DB::connection(), 'C:/Users/Lenovo/Downloads/u846702626_banksampah.sql', TrialCleanupService::OBSOLETE_BACKUP, confirmedLatest: true))->toThrow(RuntimeException::class, 'diketahui usang');
 });
 
