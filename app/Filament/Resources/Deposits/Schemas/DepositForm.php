@@ -3,6 +3,8 @@
 namespace App\Filament\Resources\Deposits\Schemas;
 
 use App\Models\WastePrice;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
@@ -75,7 +77,7 @@ class DepositForm
                             ->preload()
                             ->required()
                             ->live()
-                            ->afterStateUpdated(function ($state, Get $get, Set $set) {
+                            ->afterStateUpdated(function (mixed $state, Get $get, Set $set): void {
                                 $price = WastePrice::query()
                                     ->where('waste_type_id', $state)
                                     ->where('is_active', true)
@@ -88,14 +90,10 @@ class DepositForm
                                     ->orderByDesc('effective_from')
                                     ->value('price');
 
-                                $price = (float) ($price ?? 0);
+                                $price = (string) ($price ?? '0.00');
 
                                 $set('price', $price);
-
-                                $weight = (float) ($get('weight') ?? 0);
-                                $subtotal = $weight * $price;
-
-                                $set('subtotal', $subtotal);
+                                $set('subtotal', self::calculateSubtotal($get('weight'), $price));
 
                                 self::updateTotals($get, $set);
                             }),
@@ -111,13 +109,8 @@ class DepositForm
                             ->suffix('kg')
                             ->required()
                             ->live()
-                            ->afterStateUpdated(function (Get $get, Set $set) {
-                                $weight = (float) ($get('weight') ?? 0);
-                                $price = (float) ($get('price') ?? 0);
-
-                                $subtotal = $weight * $price;
-
-                                $set('subtotal', $subtotal);
+                            ->afterStateUpdated(function (Get $get, Set $set): void {
+                                $set('subtotal', self::calculateSubtotal($get('weight'), $get('price')));
 
                                 self::updateTotals($get, $set);
                             }),
@@ -174,53 +167,44 @@ class DepositForm
 
     private static function updateTotals(Get $get, Set $set): void
     {
-        $items = $get('../../items') ?? [];
-
-        $totalWeight = collect($items)
-            ->sum(fn ($item) => (float) ($item['weight'] ?? 0));
-
-        $totalAmount = collect($items)
-            ->sum(fn ($item) => (float) ($item['subtotal'] ?? 0));
-
-        /*
-         * Dalam callback item Repeater, state parent kadang belum
-         * membawa subtotal terbaru yang baru saja kita set.
-         * Karena itu kita hitung ulang item aktif dari weight × price.
-         */
-        $currentWeight = (float) ($get('weight') ?? 0);
-        $currentPrice = (float) ($get('price') ?? 0);
-        $currentSubtotal = $currentWeight * $currentPrice;
-
-        /*
-         * Cari subtotal lama pada item aktif.
-         *
-         * Jika state repeater belum ikut berubah, koreksi totalAmount
-         * dengan subtotal terbaru.
-         */
-        $storedCurrentSubtotal = (float) ($get('subtotal') ?? 0);
-
-        if ($currentSubtotal !== $storedCurrentSubtotal) {
-            $totalAmount =
-                $totalAmount
-                - $storedCurrentSubtotal
-                + $currentSubtotal;
-        }
-
-        $set('../../total_weight', $totalWeight);
-        $set('../../total_amount', $totalAmount);
+        $totals = self::calculateTotals($get('../../items') ?? []);
+        $set('../../total_weight', $totals['weight']);
+        $set('../../total_amount', $totals['amount']);
     }
 
     private static function updateTotalsFromRepeater(Get $get, Set $set): void
     {
-        $items = $get('items') ?? [];
+        $totals = self::calculateTotals($get('items') ?? []);
+        $set('total_weight', $totals['weight']);
+        $set('total_amount', $totals['amount']);
+    }
 
-        $totalWeight = collect($items)
-            ->sum(fn ($item) => (float) ($item['weight'] ?? 0));
+    private static function decimalValue(mixed $value): BigDecimal
+    {
+        $value = is_scalar($value) ? trim((string) $value) : '';
 
-        $totalAmount = collect($items)
-            ->sum(fn ($item) => (float) ($item['subtotal'] ?? 0));
+        return BigDecimal::of(is_numeric($value) ? $value : '0');
+    }
 
-        $set('total_weight', $totalWeight);
-        $set('total_amount', $totalAmount);
+    private static function calculateSubtotal(mixed $weight, mixed $price): string
+    {
+        return (string) self::decimalValue($weight)->multipliedBy(self::decimalValue($price))
+            ->toScale(2, RoundingMode::HalfUp);
+    }
+
+    /**
+     * @param  array<array-key, array<string, mixed>>  $items
+     * @return array{weight: string, amount: string}
+     */
+    private static function calculateTotals(array $items): array
+    {
+        $weight = BigDecimal::of('0.000');
+        $amount = BigDecimal::of('0.00');
+        foreach ($items as $item) {
+            $weight = $weight->plus(self::decimalValue($item['weight'] ?? null));
+            $amount = $amount->plus(self::calculateSubtotal($item['weight'] ?? null, $item['price'] ?? null));
+        }
+
+        return ['weight' => (string) $weight, 'amount' => (string) $amount];
     }
 }

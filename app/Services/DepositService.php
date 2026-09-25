@@ -34,51 +34,43 @@ class DepositService
                 );
             }
 
+            $totalWeight = BigDecimal::of('0.000');
+            $totalAmount = BigDecimal::of('0.00');
             foreach ($deposit->items as $item) {
-                $weight = (float) $item->weight;
-                $price = (float) $item->price;
-                $subtotal = (float) $item->subtotal;
+                $weight = BigDecimal::of($item->weight);
+                $price = BigDecimal::of($item->price);
+                $subtotal = BigDecimal::of($item->subtotal);
 
-                if ($weight <= 0) {
+                if ($weight->isLessThanOrEqualTo(0)) {
                     throw new Exception(
                         'Terdapat berat bahan yang nol atau negatif.'
                     );
                 }
 
-                if ($price <= 0) {
+                if ($price->isLessThanOrEqualTo(0)) {
                     throw new Exception(
                         'Terdapat harga bahan yang nol atau negatif.'
                     );
                 }
 
-                $expectedSubtotal = $weight * $price;
+                $expectedSubtotal = $weight->multipliedBy($price)->toScale(2, RoundingMode::HalfUp);
 
-                if (abs($subtotal - $expectedSubtotal) > 0.01) {
+                if (! $subtotal->isEqualTo($expectedSubtotal)) {
                     throw new Exception(
                         'Terdapat subtotal bahan yang tidak sesuai.'
                     );
                 }
+                $totalWeight = $totalWeight->plus($weight);
+                $totalAmount = $totalAmount->plus($subtotal);
             }
 
-            $totalWeight = $deposit->items->sum(
-                fn ($item) => (float) $item->weight
-            );
-
-            $totalAmount = $deposit->items->sum(
-                fn ($item) => (float) $item->subtotal
-            );
-
-            if (
-                abs((float) $deposit->total_weight - $totalWeight) > 0.001
-            ) {
+            if (! BigDecimal::of($deposit->total_weight)->isEqualTo($totalWeight)) {
                 throw new Exception(
                     'Total berat tidak sesuai dengan rincian timbangan.'
                 );
             }
 
-            if (
-                abs((float) $deposit->total_amount - $totalAmount) > 0.01
-            ) {
+            if (! BigDecimal::of($deposit->total_amount)->isEqualTo($totalAmount)) {
                 throw new Exception(
                     'Nilai setoran tidak sesuai dengan rincian transaksi.'
                 );
