@@ -299,7 +299,7 @@ class TrialCleanupService
             if ($schemaDifferences !== []) {
                 $reasons[] = 'Skema/foreign key berbeda dari manifest.';
             }
-            $state = $actual === $manifest['tables'] ? 'not_cleaned' : ($actual === $afterExpected ? 'already_clean' : 'mismatch');
+            $state = $this->snapshotsMatch($actual, $manifest['tables']) ? 'not_cleaned' : ($this->snapshotsMatch($actual, $afterExpected) ? 'already_clean' : 'mismatch');
             $orphans = $this->foreignKeyOrphans($db, $schema);
             $totals = $this->totals($db);
             if ($orphans !== [] || ($state === 'not_cleaned' && $totals !== $manifest['totals'])) {
@@ -321,6 +321,15 @@ class TrialCleanupService
         } finally {
             $db->rollBack();
         }
+    }
+
+    /** Compare copies with only table keys sorted; keep all table contents strict. */
+    public function snapshotsMatch(array $actual, array $expected): bool
+    {
+        ksort($actual, SORT_STRING);
+        ksort($expected, SORT_STRING);
+
+        return $actual === $expected;
     }
 
     /** @return array<string, mixed> */
@@ -472,8 +481,8 @@ class TrialCleanupService
                 }
                 $afterExpected[$table] = $empty;
             }
-            $alreadyClean = $before === $afterExpected;
-            if (! $alreadyClean && $before !== $expected) {
+            $alreadyClean = $this->snapshotsMatch($before, $afterExpected);
+            if (! $alreadyClean && ! $this->snapshotsMatch($before, $expected)) {
                 throw new RuntimeException('ID, jumlah, referensi, atau fingerprint data berbeda dari manifest.');
             }
             if ($this->classificationBlockers($db, $schema) !== [] || $this->foreignKeyOrphans($db, $schema) !== []) {
@@ -504,7 +513,7 @@ class TrialCleanupService
                 }
             }
             $after = $this->snapshot($db, $schema, lock: true);
-            if ($after !== $afterExpected || $this->schema($db) !== $schema || $this->foreignKeyOrphans($db, $schema) !== [] || $this->referenceFindings($db) !== []) {
+            if (! $this->snapshotsMatch($after, $afterExpected) || $this->schema($db) !== $schema || $this->foreignKeyOrphans($db, $schema) !== [] || $this->referenceFindings($db) !== []) {
                 throw new RuntimeException('Verifikasi akhir gagal: data master berubah atau transaksi/referensi tertinggal.');
             }
             $totalsAfter = $this->totals($db);
@@ -513,7 +522,7 @@ class TrialCleanupService
                     throw new RuntimeException('Saldo uji masih tersisa.');
                 }
             }
-            $report = ['status' => $alreadyClean ? 'already_clean_noop' : ($commit ? 'committed' : 'simulated_rolled_back'), 'identity' => $this->identity($db), 'server' => $server, 'deleted' => $deleted, 'before' => $before, 'after' => $after, 'totals_before' => $totalsBefore, 'totals_after' => $totalsAfter, 'master_fingerprints_identical' => array_intersect_key($before, array_flip(self::MASTERS)) === array_intersect_key($after, array_flip(self::MASTERS)), 'all_preserved_tables_identical' => array_diff_key($before, array_flip(self::TRANSACTIONS)) === array_diff_key($after, array_flip(self::TRANSACTIONS)), 'foreign_key_orphans_after' => [], 'reference_findings_after' => []];
+            $report = ['status' => $alreadyClean ? 'already_clean_noop' : ($commit ? 'committed' : 'simulated_rolled_back'), 'identity' => $this->identity($db), 'server' => $server, 'deleted' => $deleted, 'before' => $before, 'after' => $after, 'totals_before' => $totalsBefore, 'totals_after' => $totalsAfter, 'master_fingerprints_identical' => $this->snapshotsMatch(array_intersect_key($before, array_flip(self::MASTERS)), array_intersect_key($after, array_flip(self::MASTERS))), 'all_preserved_tables_identical' => $this->snapshotsMatch(array_diff_key($before, array_flip(self::TRANSACTIONS)), array_diff_key($after, array_flip(self::TRANSACTIONS))), 'foreign_key_orphans_after' => [], 'reference_findings_after' => []];
             if ($commit) {
                 $beforeCommit?->__invoke();
                 $db->commit();
